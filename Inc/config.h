@@ -168,6 +168,17 @@
 // #define ELECTRIC_BRAKE_ENABLE           // [-] Flag to enable electric brake and replace the motor "freewheel" with a constant braking when the input torque request is 0. Only available and makes sense for TORQUE mode.
 // #define ELECTRIC_BRAKE_MAX    100       // (0, 500) Maximum electric brake to be applied when input torque request is 0 (pedal fully released).
 // #define ELECTRIC_BRAKE_THRES  120       // (0, 500) Threshold below at which the electric brake starts engaging.
+
+// Vehicle reference values (used for documentation/tuning and optional macro calculations)
+#define DEFAULT_VEHICLE_WHEEL_DIAMETER_M              0.40f   // [m] Wheel outer diameter (0.4 m default)
+#define DEFAULT_VEHICLE_MASS_KG                       50.0f   // [kg] Complete system mass used for tuning references
+
+// Torque-mode acceleration supervisor and per-wheel torque-command offset
+#define DEFAULT_TORQUE_ACCEL_SUPERVISOR_ENABLE         0       // [-] 0 = disabled (default), 1 = enable acceleration supervision in TORQUE mode
+#define DEFAULT_TORQUE_ACCEL_LIMIT_RPM_PER_SEC         24      // [rpm/s] Wheel acceleration limit. 24 rpm/s ~= 0.5 m/s^2 with 0.4 m wheel diameter
+#define DEFAULT_TORQUE_ACCEL_SUPERVISOR_LPF_TAU_SEC    0.20f   // [s] LPF time constant for wheel-acceleration estimate
+#define DEFAULT_TORQUE_OFFSET_LEFT                     0       // [cmd] Left wheel torque-command offset in TRQ mode; command unit is internal target [-1000..1000], not Nm
+#define DEFAULT_TORQUE_OFFSET_RIGHT                    0       // [cmd] Right wheel torque-command offset in TRQ mode; command unit is internal target [-1000..1000], not Nm
 // ########################### END OF MOTOR CONTROL ########################
 
 
@@ -674,6 +685,27 @@
 #endif
 #ifndef STEER_COEFFICIENT
   #define STEER_COEFFICIENT DEFAULT_STEER_COEFFICIENT
+#endif
+#ifndef VEHICLE_WHEEL_DIAMETER_M
+  #define VEHICLE_WHEEL_DIAMETER_M DEFAULT_VEHICLE_WHEEL_DIAMETER_M
+#endif
+#ifndef VEHICLE_MASS_KG
+  #define VEHICLE_MASS_KG DEFAULT_VEHICLE_MASS_KG
+#endif
+#ifndef TORQUE_ACCEL_SUPERVISOR_ENABLE
+  #define TORQUE_ACCEL_SUPERVISOR_ENABLE DEFAULT_TORQUE_ACCEL_SUPERVISOR_ENABLE
+#endif
+#ifndef TORQUE_ACCEL_LIMIT_RPM_PER_SEC
+  #define TORQUE_ACCEL_LIMIT_RPM_PER_SEC DEFAULT_TORQUE_ACCEL_LIMIT_RPM_PER_SEC
+#endif
+#ifndef TORQUE_ACCEL_SUPERVISOR_LPF_TAU_SEC
+  #define TORQUE_ACCEL_SUPERVISOR_LPF_TAU_SEC DEFAULT_TORQUE_ACCEL_SUPERVISOR_LPF_TAU_SEC
+#endif
+#ifndef TORQUE_OFFSET_LEFT
+  #define TORQUE_OFFSET_LEFT DEFAULT_TORQUE_OFFSET_LEFT
+#endif
+#ifndef TORQUE_OFFSET_RIGHT
+  #define TORQUE_OFFSET_RIGHT DEFAULT_TORQUE_OFFSET_RIGHT
 #endif
 #if defined(PRI_INPUT1) && defined(PRI_INPUT2) && defined(AUX_INPUT1) && defined(AUX_INPUT2)
   #define INPUTS_NR               2

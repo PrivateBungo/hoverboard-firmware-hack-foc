@@ -77,6 +77,7 @@ extern volatile uint32_t timeoutCntGen; // Timeout counter for the General timeo
 extern volatile uint8_t  timeoutFlgGen; // Timeout Flag for the General timeout (PPM, PWM, Nunchuk)
 extern uint8_t timeoutFlgADC;           // Timeout Flag for for ADC Protection: 0 = OK, 1 = Problem detected (line disconnected or wrong ADC data)
 extern uint8_t timeoutFlgSerial;        // Timeout Flag for Rx Serial command: 0 = OK, 1 = Problem detected (line disconnected or wrong Rx data)
+extern uint8_t ctrlModReq;
 
 extern volatile int pwml;               // global variable for pwm left. -1000 to 1000
 extern volatile int pwmr;               // global variable for pwm right. -1000 to 1000
@@ -161,6 +162,7 @@ static uint32_t    inactivity_timeout_counter;
 static MultipleTap MultipleTapBrake;    // define multiple tap functionality for the Brake pedal
 
 static uint16_t rate = RATE; // Adjustable rate to support multiple drive modes on startup
+static uint32_t driveControlTimestampMs;
 
 #ifdef MULTI_MODE_DRIVE
   static uint8_t drive_mode;
@@ -210,6 +212,7 @@ int main(void) {
 
   #ifndef VARIANT_TRANSPOTTER
     DriveControl_Init(&driveControlState);
+    driveControlTimestampMs = HAL_GetTick();
   #endif
   
   int32_t board_temp_adcFixdt = adc_buffer.temp << 16;  // Fixed-point filter output initialized with current ADC converted to fixed-point
@@ -339,6 +342,15 @@ int main(void) {
       #endif
 
       DriveControl_MixCommands(speed, steer, &cmdL, &cmdR);
+      {
+        const uint32_t nowMs = HAL_GetTick();
+        float dtSec = ((float)(nowMs - driveControlTimestampMs)) * 0.001f;
+        if (dtSec <= 0.0f) {
+          dtSec = 0.001f;
+        }
+        driveControlTimestampMs = nowMs;
+        DriveControl_ApplyTorqueModeAdjustments(&driveControlState, (uint8_t)(ctrlModReq == TRQ_MODE), dtSec, rtY_Left.n_mot, rtY_Right.n_mot, &cmdL, &cmdR);
+      }
       DriveControl_MapCommandsToPwm(cmdL, cmdR, &pwml, &pwmr);
     #endif
 
