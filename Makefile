@@ -40,6 +40,7 @@ Src/setup.c \
 Src/control.c \
 Src/comms.c \
 Src/util.c \
+Src/drive_control.c \
 Src/main.c \
 Src/bldc.c \
 Src/eeprom.c \

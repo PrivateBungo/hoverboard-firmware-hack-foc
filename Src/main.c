@@ -30,6 +30,7 @@
 #include "BLDC_controller.h"      /* BLDC's header file */
 #include "rtwtypes.h"
 #include "comms.h"
+#include "drive_control.h"
 
 #if defined(DEBUG_I2C_LCD) || defined(SUPPORT_LCD)
 #include "hd44780.h"
@@ -152,10 +153,7 @@ static uint8_t sideboard_leds_R;
 static int16_t    speed;                // local variable for speed. -1000 to 1000
 #ifndef VARIANT_TRANSPOTTER
   static int16_t  steer;                // local variable for steering. -1000 to 1000
-  static int16_t  steerRateFixdt;       // local fixed-point variable for steering rate limiter
-  static int16_t  speedRateFixdt;       // local fixed-point variable for speed rate limiter
-  static int32_t  steerFixdt;           // local fixed-point variable for steering low-pass filter
-  static int32_t  speedFixdt;           // local fixed-point variable for speed low-pass filter
+  static DriveControlState driveControlState;
 #endif
 
 static uint32_t    buzzerTimer_prev = 0;
@@ -209,6 +207,10 @@ int main(void) {
 
   poweronMelody();
   HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_SET);
+
+  #ifndef VARIANT_TRANSPOTTER
+    DriveControl_Init(&driveControlState);
+  #endif
   
   int32_t board_temp_adcFixdt = adc_buffer.temp << 16;  // Fixed-point filter output initialized with current ADC converted to fixed-point
   int16_t board_temp_adcFilt  = adc_buffer.temp;
@@ -260,7 +262,7 @@ int main(void) {
           ABS(input1[inIdx].cmd) < 50 && ABS(input2[inIdx].cmd) < 50){
         beepShort(6);                     // make 2 beeps indicating the motor enable
         beepShort(4); HAL_Delay(100);
-        steerFixdt = speedFixdt = 0;      // reset filters
+        DriveControl_ResetFilters(&driveControlState);
         enable = 1;                       // enable motors
         #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
         printf("-- Motors enabled --\r\n");
@@ -315,12 +317,7 @@ int main(void) {
       #endif
 
       // ####### LOW-PASS FILTER #######
-      rateLimiter16(input1[inIdx].cmd, rate, &steerRateFixdt);
-      rateLimiter16(input2[inIdx].cmd, rate, &speedRateFixdt);
-      filtLowPass32(steerRateFixdt >> 4, FILTER, &steerFixdt);
-      filtLowPass32(speedRateFixdt >> 4, FILTER, &speedFixdt);
-      steer = (int16_t)(steerFixdt >> 16);  // convert fixed-point to integer
-      speed = (int16_t)(speedFixdt >> 16);  // convert fixed-point to integer
+      DriveControl_FilterInputs(&driveControlState, input1[inIdx].cmd, input2[inIdx].cmd, rate, &steer, &speed);
 
       // ####### VARIANT_HOVERCAR #######
       #ifdef VARIANT_HOVERCAR
@@ -341,27 +338,8 @@ int main(void) {
       }
       #endif
 
-      #if defined(TANK_STEERING) && !defined(VARIANT_HOVERCAR) && !defined(VARIANT_SKATEBOARD) 
-        // Tank steering (no mixing)
-        cmdL = steer; 
-        cmdR = speed;
-      #else 
-        // ####### MIXER #######
-        mixerFcn(speed << 4, steer << 4, &cmdR, &cmdL);   // This function implements the equations above
-      #endif
-
-
-      // ####### SET OUTPUTS (if the target change is less than +/- 100) #######
-      #ifdef INVERT_R_DIRECTION
-        pwmr = cmdR;
-      #else
-        pwmr = -cmdR;
-      #endif
-      #ifdef INVERT_L_DIRECTION
-        pwml = -cmdL;
-      #else
-        pwml = cmdL;
-      #endif
+      DriveControl_MixCommands(speed, steer, &cmdL, &cmdR);
+      DriveControl_MapCommandsToPwm(cmdL, cmdR, &pwml, &pwmr);
     #endif
 
     #ifdef VARIANT_TRANSPOTTER
