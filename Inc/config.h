@@ -152,10 +152,10 @@
 #define DIAG_ENA        1               // [-] Motor Diagnostics enable flag: 0 = Disabled, 1 = Enabled (default)
 
 // Limitation settings
-#define I_MOT_MAX       20              // [A] Maximum single motor current limit
+#define I_MOT_MAX       18              // [A] Maximum single motor current limit
 #define I_DC_MAX        20              // [A] Maximum stage2 DC Link current limit for Commutation and Sinusoidal types (This is the final current protection. Above this value, current chopping is applied.)
-#define I_AC_SOFT_MAX   17              // [A] Soft current limit at standstill in TRQ_MODE. It ramps up linearly with wheel speed until it reaches I_MOT_MAX
-#define I_AC_SOFT_RPM   93              // [rpm] Wheel speed breakpoint for soft current ramp (~7 km/h on 0.4 m wheel diameter)
+#define I_AC_SOFT_MAX   10              // [A] Soft current limit at standstill in TRQ_MODE. It ramps up linearly with wheel speed until it reaches I_MOT_MAX
+#define I_AC_SOFT_RPM   66              // [rpm] Wheel speed breakpoint for soft current ramp (~5 km/h on 0.4 m wheel diameter)
 #define N_MOT_MAX       1000            // [rpm] Maximum motor speed limit
 
 // Field Weakening / Phase Advance
