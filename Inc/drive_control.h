@@ -26,5 +26,6 @@ void DriveControl_ResetFilters(DriveControlState *state);
 void DriveControl_FilterInputs(DriveControlState *state, int16_t steerCmd, int16_t speedCmd, uint16_t rate, int16_t *steer, int16_t *speed);
 void DriveControl_MixCommands(int16_t speed, int16_t steer, int16_t *cmdL, int16_t *cmdR);
 void DriveControl_MapCommandsToPwm(int16_t cmdL, int16_t cmdR, volatile int *pwml, volatile int *pwmr);
+int16_t DriveControl_ApplySoftTorqueLimit(int16_t torqueCmd, int16_t wheelSpeedAbsRpm, uint8_t isTorqueMode);
 
 #endif // DRIVE_CONTROL_H

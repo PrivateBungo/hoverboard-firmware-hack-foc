@@ -55,3 +55,36 @@ void DriveControl_MapCommandsToPwm(int16_t cmdL, int16_t cmdR, volatile int *pwm
   *pwml = cmdL;
 #endif
 }
+
+
+int16_t DriveControl_ApplySoftTorqueLimit(int16_t torqueCmd, int16_t wheelSpeedAbsRpm, uint8_t isTorqueMode) {
+  int32_t softCurrentA;
+  int32_t speedForRamp;
+
+  if (!isTorqueMode) {
+    return torqueCmd;
+  }
+
+#if (I_MOT_MAX <= 0)
+  return 0;
+#else
+  if (I_AC_SOFT_RPM <= 0) {
+    softCurrentA = I_MOT_MAX;
+  } else {
+    speedForRamp = wheelSpeedAbsRpm;
+    if (speedForRamp < 0) {
+      speedForRamp = 0;
+    } else if (speedForRamp > I_AC_SOFT_RPM) {
+      speedForRamp = I_AC_SOFT_RPM;
+    }
+    softCurrentA = I_AC_SOFT_MAX + (((int32_t)(I_MOT_MAX - I_AC_SOFT_MAX) * speedForRamp) / I_AC_SOFT_RPM);
+  }
+
+  if (softCurrentA < 0) {
+    softCurrentA = 0;
+  } else if (softCurrentA > I_MOT_MAX) {
+    softCurrentA = I_MOT_MAX;
+  }
+  return (int16_t)(((int32_t)torqueCmd * softCurrentA) / I_MOT_MAX);
+#endif
+}

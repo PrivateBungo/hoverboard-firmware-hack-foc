@@ -82,6 +82,7 @@ extern volatile int pwml;               // global variable for pwm left. -1000 t
 extern volatile int pwmr;               // global variable for pwm right. -1000 to 1000
 
 extern uint8_t enable;                  // global variable for motor enable
+extern uint8_t ctrlModReq;              // global variable for final control mode request
 
 extern int16_t batVoltage;              // global variable for battery voltage
 
@@ -350,6 +351,9 @@ int main(void) {
 
       DriveControl_MixCommands(speed, steer, &cmdL, &cmdR);
       DriveControl_MapCommandsToPwm(cmdL, cmdR, &pwml, &pwmr);
+
+      pwml = DriveControl_ApplySoftTorqueLimit((int16_t)pwml, abs(rtY_Left.n_mot), (ctrlModReq == TRQ_MODE));
+      pwmr = DriveControl_ApplySoftTorqueLimit((int16_t)pwmr, abs(rtY_Right.n_mot), (ctrlModReq == TRQ_MODE));
     #endif
 
     #ifdef VARIANT_TRANSPOTTER
