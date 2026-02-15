@@ -12,6 +12,7 @@
 #include "drive_control.h"
 #include "drive_math.h"
 #include "config.h"
+#include "defines.h"
 
 static float clampf(float value, float minVal, float maxVal) {
   if (value < minVal) {
