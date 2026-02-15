@@ -12,6 +12,7 @@ Table of Contents
 =======================
 
 * **Wiki:** please check the wiki pages for [Getting Started](https://github.com/EFeru/hoverboard-firmware-hack-FOC/wiki#getting-started) and for [Troubleshooting](https://github.com/EFeru/hoverboard-firmware-hack-FOC/wiki#troubleshooting)
+* [Quick build + flash script](#quick-build--flash-script)
 * [Hardware](#hardware)
 * [FOC Firmware](#foc-firmware)
 * [Example Variants](#example-variants)
@@ -37,6 +38,26 @@ Table of Contents
   </tr>
 </table>
 
+
+---
+## Quick build + flash script
+
+Run this to pull latest changes, clean, build, and flash in one go:
+
+```bash
+./fw-update.sh
+```
+
+The script uses these defaults (overridable via env vars):
+
+- `PROGRAMMER_CLI=/home/gijs/STMicroelectronics/STM32Cube/STM32CubeProgrammer/bin/STM32_Programmer_CLI`
+- `FIRMWARE_ELF=/home/gijs/Documents/hoverboard-firmware-hack-foc/build/hover.elf`
+
+Example with custom paths:
+
+```bash
+PROGRAMMER_CLI=/path/to/STM32_Programmer_CLI FIRMWARE_ELF=/path/to/build/hover.elf ./fw-update.sh
+```
 
 ---
 ## Hardware
