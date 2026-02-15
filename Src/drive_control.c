@@ -10,7 +10,7 @@
 */
 
 #include "drive_control.h"
-#include "util.h"
+#include "drive_math.h"
 #include "config.h"
 
 void DriveControl_Init(DriveControlState *state) {
