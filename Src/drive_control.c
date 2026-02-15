@@ -86,7 +86,20 @@ int16_t DriveControl_ApplyStallDecay(int16_t torqueCmd, int16_t wheelSpeedRpm, u
     return torqueCmd;
   }
 
-  cmdMax = 1000 - (((int32_t)(1000 - STALL_DECAY_CMD_FLOOR) * state->stallTimerMs) / STALL_DECAY_TIME_MS);
+  if (state->stallTimerMs >= STALL_DECAY_PREEMPT_MS) {
+    cmdMax = STALL_DECAY_CMD_PREEMPT;
+  } else {
+    cmdMax = 1000 - (((int32_t)(1000 - STALL_DECAY_CMD_PREEMPT) * state->stallTimerMs) / STALL_DECAY_PREEMPT_MS);
+  }
+
+  if (state->stallTimerMs >= STALL_DECAY_TIME_MS) {
+    cmdMax = STALL_DECAY_CMD_FLOOR;
+  } else if (state->stallTimerMs > STALL_DECAY_PREEMPT_MS) {
+    uint16_t decayWindowMs = STALL_DECAY_TIME_MS - STALL_DECAY_PREEMPT_MS;
+    uint16_t elapsedDecayMs = state->stallTimerMs - STALL_DECAY_PREEMPT_MS;
+    cmdMax = STALL_DECAY_CMD_PREEMPT - (((int32_t)(STALL_DECAY_CMD_PREEMPT - STALL_DECAY_CMD_FLOOR) * elapsedDecayMs) / decayWindowMs);
+  }
+
   if (cmdMax < STALL_DECAY_CMD_FLOOR) {
     cmdMax = STALL_DECAY_CMD_FLOOR;
   }
