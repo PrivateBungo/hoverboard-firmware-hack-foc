@@ -55,3 +55,45 @@ void DriveControl_MapCommandsToPwm(int16_t cmdL, int16_t cmdR, volatile int *pwm
   *pwml = cmdL;
 #endif
 }
+
+void DriveControl_ResetStallDecay(DriveControlStallDecayState *state) {
+  state->stallTimerMs = 0;
+}
+
+int16_t DriveControl_ApplyStallDecay(int16_t torqueCmd, int16_t wheelSpeedRpm, uint8_t isTorqueMode, DriveControlStallDecayState *state) {
+  int16_t cmdAbs;
+  int16_t speedAbs;
+  int16_t cmdSign;
+  int32_t cmdMax;
+
+  if (!isTorqueMode) {
+    state->stallTimerMs = 0;
+    return torqueCmd;
+  }
+
+  cmdSign = (torqueCmd >= 0) ? 1 : -1;
+  cmdAbs = (torqueCmd >= 0) ? torqueCmd : (int16_t)-torqueCmd;
+  speedAbs = (wheelSpeedRpm >= 0) ? wheelSpeedRpm : (int16_t)-wheelSpeedRpm;
+
+  if ((speedAbs <= STALL_DECAY_SPEED_RPM) && (cmdAbs >= STALL_DECAY_CMD_TRIGGER)) {
+    if (state->stallTimerMs < STALL_DECAY_TIME_MS) {
+      uint16_t stepMs = DELAY_IN_MAIN_LOOP + 1U;
+      uint16_t nextMs = state->stallTimerMs + stepMs;
+      state->stallTimerMs = (nextMs < STALL_DECAY_TIME_MS) ? nextMs : STALL_DECAY_TIME_MS;
+    }
+  } else {
+    state->stallTimerMs = 0;
+    return torqueCmd;
+  }
+
+  cmdMax = 1000 - (((int32_t)(1000 - STALL_DECAY_CMD_FLOOR) * state->stallTimerMs) / STALL_DECAY_TIME_MS);
+  if (cmdMax < STALL_DECAY_CMD_FLOOR) {
+    cmdMax = STALL_DECAY_CMD_FLOOR;
+  }
+
+  if (cmdAbs > cmdMax) {
+    cmdAbs = (int16_t)cmdMax;
+  }
+
+  return (int16_t)(cmdAbs * cmdSign);
+}
