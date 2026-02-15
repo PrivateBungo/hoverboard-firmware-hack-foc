@@ -11,6 +11,7 @@
 
 #include "drive_control.h"
 #include "drive_math.h"
+#include "defines.h"
 #include "config.h"
 
 static float clampf(float value, float minVal, float maxVal) {
