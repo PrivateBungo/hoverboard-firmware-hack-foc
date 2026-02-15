@@ -221,8 +221,8 @@ int main(void) {
   int16_t board_temp_adcFilt  = adc_buffer.temp;
 
   #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
-    uint8_t prevLeftErrCode  = rtY_Left.z_errCode;
-    uint8_t prevRightErrCode = rtY_Right.z_errCode;
+    uint8_t prevLeftErrCode  = g_errCodeLeftEffective;
+    uint8_t prevRightErrCode = g_errCodeRightEffective;
   #endif
 
   #ifdef MULTI_MODE_DRIVE
@@ -268,7 +268,7 @@ int main(void) {
 
     #ifndef VARIANT_TRANSPOTTER
       // ####### MOTOR ENABLING: Only if the initial input is very small (for SAFETY) #######
-      if (enable == 0 && !rtY_Left.z_errCode && !rtY_Right.z_errCode && 
+      if (enable == 0 && !g_errCodeLeftEffective && !g_errCodeRightEffective && 
           ABS(input1[inIdx].cmd) < 50 && ABS(input2[inIdx].cmd) < 50){
         beepShort(6);                     // make 2 beeps indicating the motor enable
         beepShort(4); HAL_Delay(100);
@@ -477,19 +477,19 @@ int main(void) {
 
     // ####### DEBUG SERIAL OUT #######
     #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
-      if (rtY_Left.z_errCode != prevLeftErrCode || rtY_Right.z_errCode != prevRightErrCode) {
+      if (g_errCodeLeftEffective != prevLeftErrCode || g_errCodeRightEffective != prevRightErrCode) {
         printf("MotorErr L:%u[b0:%u b1:%u b2:%u] R:%u[b0:%u b1:%u b2:%u]\r\n",
-          rtY_Left.z_errCode,
-          ((rtY_Left.z_errCode  & 0x01U) != 0U),
-          ((rtY_Left.z_errCode  & 0x02U) != 0U),
-          ((rtY_Left.z_errCode  & 0x04U) != 0U),
-          rtY_Right.z_errCode,
-          ((rtY_Right.z_errCode & 0x01U) != 0U),
-          ((rtY_Right.z_errCode & 0x02U) != 0U),
-          ((rtY_Right.z_errCode & 0x04U) != 0U));
+          g_errCodeLeftEffective,
+          ((g_errCodeLeftEffective  & 0x01U) != 0U),
+          ((g_errCodeLeftEffective  & 0x02U) != 0U),
+          ((g_errCodeLeftEffective  & 0x04U) != 0U),
+          g_errCodeRightEffective,
+          ((g_errCodeRightEffective & 0x01U) != 0U),
+          ((g_errCodeRightEffective & 0x02U) != 0U),
+          ((g_errCodeRightEffective & 0x04U) != 0U));
 
-        prevLeftErrCode  = rtY_Left.z_errCode;
-        prevRightErrCode = rtY_Right.z_errCode;
+        prevLeftErrCode  = g_errCodeLeftEffective;
+        prevRightErrCode = g_errCodeRightEffective;
       }
 
       if (main_loop_counter % DEBUG_INPUT_PRINT_INTERVAL_LOOPS == 0) {    // Send data periodically every ~5 s
@@ -501,8 +501,8 @@ int main(void) {
             input2[inIdx].raw,        // 2: INPUT2
             cmdL,                     // 3: output command: [-1000, 1000]
             cmdR,                     // 4: output command: [-1000, 1000]
-            rtY_Left.z_errCode,       // 5: left motor error code flags
-            rtY_Right.z_errCode,      // 6: right motor error code flags
+            g_errCodeLeftEffective,       // 5: left motor error code flags
+            g_errCodeRightEffective,      // 6: right motor error code flags
             adc_buffer.batt1,         // 7: for battery voltage calibration
             batVoltageCalib,          // 8: for verifying battery voltage calibration
             board_temp_adcFilt,       // 9: for board temperature calibration
@@ -557,7 +557,7 @@ int main(void) {
         printf("Powering off, battery voltage is too low\r\n");
       #endif
       poweroff();
-    } else if (rtY_Left.z_errCode || rtY_Right.z_errCode) {                                           // 1 beep (low pitch): Motor error, disable motors
+    } else if (g_errCodeLeftEffective || g_errCodeRightEffective) {                                           // 1 beep (low pitch): Motor error, disable motors
       enable = 0;
       beepCount(1, 24, 1);
     } else if (timeoutFlgADC) {                                                                       // 2 beeps (low pitch): ADC timeout

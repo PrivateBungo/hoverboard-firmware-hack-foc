@@ -65,6 +65,9 @@ volatile uint32_t buzzerTimer = 0;
 static uint8_t  buzzerPrev  = 0;
 static uint8_t  buzzerIdx   = 0;
 
+uint8_t g_errCodeLeftEffective  = 0;
+uint8_t g_errCodeRightEffective = 0;
+
 uint8_t        enable       = 0;        // initially motors are disabled for SAFETY
 static uint8_t enableFin    = 0;
 
@@ -84,6 +87,10 @@ static int32_t batVoltageFixdt  = (400 * BAT_CELLS * BAT_CALIB_ADC) / BAT_CALIB_
 // =================================
 // DMA interrupt frequency =~ 16 kHz
 // =================================
+#define STALL_ERR_BIT              (0x04U)
+#define STALL_RECOVERY_DELAY_MS    (10000U)
+#define STALL_NEUTRAL_PWM_DEADBAND (300)
+
 void DMA1_Channel1_IRQHandler(void) {
 
   DMA1->IFCR = DMA_IFCR_CTCIF1;
@@ -161,6 +168,8 @@ void DMA1_Channel1_IRQHandler(void) {
   int ul, vl, wl;
   int ur, vr, wr;
   static boolean_T OverrunFlag = false;
+  static uint32_t stallRecoverAtMs = 0;
+  static uint8_t stallRecoveryActive = 0;
 
   /* Check for overrun */
   if (OverrunFlag) {
@@ -168,8 +177,24 @@ void DMA1_Channel1_IRQHandler(void) {
   }
   OverrunFlag = true;
 
-  /* Make sure to stop BOTH motors in case of an error */
-  enableFin = enable && !rtY_Left.z_errCode && !rtY_Right.z_errCode;
+  const uint32_t tickNowMs = HAL_GetTick();
+  const uint8_t leftErrRaw = rtY_Left.z_errCode;
+  const uint8_t rightErrRaw = rtY_Right.z_errCode;
+  const uint8_t stallErrActive = ((leftErrRaw & STALL_ERR_BIT) != 0U) || ((rightErrRaw & STALL_ERR_BIT) != 0U);
+
+  if (!stallRecoveryActive && stallErrActive) {
+    stallRecoveryActive = 1U;
+    stallRecoverAtMs = tickNowMs + STALL_RECOVERY_DELAY_MS;
+  }
+
+  const uint8_t stallGraceActive = stallRecoveryActive && (stallRecoverAtMs > tickNowMs);
+
+  /* During stall recovery we reject control input and keep motors disabled. */
+  if (stallRecoveryActive) {
+    enableFin = 0;
+  } else {
+    enableFin = enable && !leftErrRaw && !rightErrRaw;
+  }
  
   // ========================= LEFT MOTOR ============================ 
     // Get hall sensors values
@@ -201,6 +226,28 @@ void DMA1_Channel1_IRQHandler(void) {
   // errCodeLeft  = rtY_Left.z_errCode;
   // motSpeedLeft = rtY_Left.n_mot;
   // motAngleLeft = rtY_Left.a_elecAngle;
+
+    const uint8_t inputIsNeutral = (ABS(pwml) <= STALL_NEUTRAL_PWM_DEADBAND) && (ABS(pwmr) <= STALL_NEUTRAL_PWM_DEADBAND);
+    const uint8_t stallRecoveryReady = stallRecoveryActive && !stallGraceActive && inputIsNeutral;
+
+    if (stallRecoveryReady) {
+      rtDW_Left.UnitDelay_DSTATE_e &= (uint8_T)~STALL_ERR_BIT;
+      rtDW_Right.UnitDelay_DSTATE_e &= (uint8_T)~STALL_ERR_BIT;
+    }
+
+    g_errCodeLeftEffective = rtY_Left.z_errCode;
+    g_errCodeRightEffective = rtY_Right.z_errCode;
+
+    if (stallRecoveryReady) {
+      g_errCodeLeftEffective &= (uint8_t)~STALL_ERR_BIT;
+      g_errCodeRightEffective &= (uint8_t)~STALL_ERR_BIT;
+    }
+
+    /* Exit recovery only after raw stall bit is gone, preventing immediate retrigger loops. */
+    if (stallRecoveryActive && !stallGraceActive && !stallErrActive) {
+      stallRecoveryActive = 0U;
+      stallRecoverAtMs = 0U;
+    }
 
     /* Apply commands */
     LEFT_TIM->LEFT_TIM_U    = (uint16_t)CLAMP(ul + pwm_res / 2, pwm_margin, pwm_res-pwm_margin);
