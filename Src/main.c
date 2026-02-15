@@ -160,6 +160,11 @@ static uint32_t    buzzerTimer_prev = 0;
 static uint32_t    inactivity_timeout_counter;
 static MultipleTap MultipleTapBrake;    // define multiple tap functionality for the Brake pedal
 
+#if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
+  #define DEBUG_INPUT_PRINT_PERIOD_MS       5000U
+  #define DEBUG_INPUT_PRINT_INTERVAL_LOOPS  (((DEBUG_INPUT_PRINT_PERIOD_MS / (DELAY_IN_MAIN_LOOP + 1U)) > 0U) ? (DEBUG_INPUT_PRINT_PERIOD_MS / (DELAY_IN_MAIN_LOOP + 1U)) : 1U)
+#endif
+
 static uint16_t rate = RATE; // Adjustable rate to support multiple drive modes on startup
 
 #ifdef MULTI_MODE_DRIVE
@@ -214,6 +219,11 @@ int main(void) {
   
   int32_t board_temp_adcFixdt = adc_buffer.temp << 16;  // Fixed-point filter output initialized with current ADC converted to fixed-point
   int16_t board_temp_adcFilt  = adc_buffer.temp;
+
+  #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
+    uint8_t prevLeftErrCode  = rtY_Left.z_errCode;
+    uint8_t prevRightErrCode = rtY_Right.z_errCode;
+  #endif
 
   #ifdef MULTI_MODE_DRIVE
     if (adc_buffer.l_tx2 > input1[0].min + 50 && adc_buffer.l_rx2 > input2[0].min + 50) {
@@ -467,19 +477,36 @@ int main(void) {
 
     // ####### DEBUG SERIAL OUT #######
     #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
-      if (main_loop_counter % 25 == 0) {    // Send data periodically every 125 ms      
+      if (rtY_Left.z_errCode != prevLeftErrCode || rtY_Right.z_errCode != prevRightErrCode) {
+        printf("MotorErr L:%u[b0:%u b1:%u b2:%u] R:%u[b0:%u b1:%u b2:%u]\r\n",
+          rtY_Left.z_errCode,
+          ((rtY_Left.z_errCode  & 0x01U) != 0U),
+          ((rtY_Left.z_errCode  & 0x02U) != 0U),
+          ((rtY_Left.z_errCode  & 0x04U) != 0U),
+          rtY_Right.z_errCode,
+          ((rtY_Right.z_errCode & 0x01U) != 0U),
+          ((rtY_Right.z_errCode & 0x02U) != 0U),
+          ((rtY_Right.z_errCode & 0x04U) != 0U));
+
+        prevLeftErrCode  = rtY_Left.z_errCode;
+        prevRightErrCode = rtY_Right.z_errCode;
+      }
+
+      if (main_loop_counter % DEBUG_INPUT_PRINT_INTERVAL_LOOPS == 0) {    // Send data periodically every ~5 s
         #if defined(DEBUG_SERIAL_PROTOCOL)
           process_debug();
         #else
-          printf("in1:%i in2:%i cmdL:%i cmdR:%i BatADC:%i BatV:%i TempADC:%i Temp:%i \r\n",
+          printf("in1:%i in2:%i cmdL:%i cmdR:%i ErrL:%u ErrR:%u BatADC:%i BatV:%i TempADC:%i Temp:%i \r\n",
             input1[inIdx].raw,        // 1: INPUT1
             input2[inIdx].raw,        // 2: INPUT2
             cmdL,                     // 3: output command: [-1000, 1000]
             cmdR,                     // 4: output command: [-1000, 1000]
-            adc_buffer.batt1,         // 5: for battery voltage calibration
-            batVoltageCalib,          // 6: for verifying battery voltage calibration
-            board_temp_adcFilt,       // 7: for board temperature calibration
-            board_temp_deg_c);        // 8: for verifying board temperature calibration
+            rtY_Left.z_errCode,       // 5: left motor error code flags
+            rtY_Right.z_errCode,      // 6: right motor error code flags
+            adc_buffer.batt1,         // 7: for battery voltage calibration
+            batVoltageCalib,          // 8: for verifying battery voltage calibration
+            board_temp_adcFilt,       // 9: for board temperature calibration
+            board_temp_deg_c);        // 10: for verifying board temperature calibration
         #endif
       }
     #endif
