@@ -166,6 +166,8 @@ static MultipleTap MultipleTapBrake;    // define multiple tap functionality for
 #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
   #define DEBUG_INPUT_PRINT_PERIOD_MS       5000U
   #define DEBUG_INPUT_PRINT_INTERVAL_LOOPS  (((DEBUG_INPUT_PRINT_PERIOD_MS / (DELAY_IN_MAIN_LOOP + 1U)) > 0U) ? (DEBUG_INPUT_PRINT_PERIOD_MS / (DELAY_IN_MAIN_LOOP + 1U)) : 1U)
+  #define DEBUG_STALL_PRINT_PERIOD_MS        250U
+  #define DEBUG_STALL_PRINT_INTERVAL_LOOPS  (((DEBUG_STALL_PRINT_PERIOD_MS / (DELAY_IN_MAIN_LOOP + 1U)) > 0U) ? (DEBUG_STALL_PRINT_PERIOD_MS / (DELAY_IN_MAIN_LOOP + 1U)) : 1U)
 #endif
 
 static uint16_t rate = RATE; // Adjustable rate to support multiple drive modes on startup
@@ -228,6 +230,24 @@ int main(void) {
   #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
     uint8_t prevLeftErrCode  = g_errCodeLeftEffective;
     uint8_t prevRightErrCode = g_errCodeRightEffective;
+    #ifndef VARIANT_TRANSPOTTER
+      uint8_t prevStallActiveLeft  = 0U;
+      uint8_t prevStallActiveRight = 0U;
+    #endif
+
+    printf("StallDecay cfg: spd<=%u trig>=%u preemptMs=%u preemptCmd=%u floor=%u totalMs=%u loopMs=%u ctrlModReq=%u\r\n",
+      (unsigned)STALL_DECAY_SPEED_RPM,
+      (unsigned)STALL_DECAY_CMD_TRIGGER,
+      (unsigned)STALL_DECAY_PREEMPT_MS,
+      (unsigned)STALL_DECAY_CMD_PREEMPT,
+      (unsigned)STALL_DECAY_CMD_FLOOR,
+      (unsigned)STALL_DECAY_TIME_MS,
+      (unsigned)(DELAY_IN_MAIN_LOOP + 1U),
+      (unsigned)CTRL_MOD_REQ);
+    printf("StallDecay mode flags: inTRQ=%u inVLT=%u runtimeCtrlMode=%u\r\n",
+      (unsigned)STALL_DECAY_IN_TRQ_MODE,
+      (unsigned)STALL_DECAY_IN_VLT_MODE,
+      (unsigned)ctrlModReq);
   #endif
 
   #ifdef MULTI_MODE_DRIVE
@@ -358,8 +378,60 @@ int main(void) {
       DriveControl_MixCommands(speed, steer, &cmdL, &cmdR);
       DriveControl_MapCommandsToPwm(cmdL, cmdR, &pwml, &pwmr);
 
-      pwml = DriveControl_ApplyStallDecay((int16_t)pwml, rtY_Left.n_mot, (ctrlModReq == TRQ_MODE), &stallDecayStateLeft);
-      pwmr = DriveControl_ApplyStallDecay((int16_t)pwmr, rtY_Right.n_mot, (ctrlModReq == TRQ_MODE), &stallDecayStateRight);
+      {
+        int16_t pwmlBeforeDecay = (int16_t)pwml;
+        int16_t pwmrBeforeDecay = (int16_t)pwmr;
+        int16_t pwmlAfterDecay;
+        int16_t pwmrAfterDecay;
+
+        uint8_t stallDecayModeActive =
+          ((STALL_DECAY_IN_TRQ_MODE != 0U) && (ctrlModReq == TRQ_MODE)) ||
+          ((STALL_DECAY_IN_VLT_MODE != 0U) && (ctrlModReq == VLT_MODE));
+
+        pwmlAfterDecay = DriveControl_ApplyStallDecay((int16_t)pwml, rtY_Left.n_mot, stallDecayModeActive, &stallDecayStateLeft);
+        pwmrAfterDecay = DriveControl_ApplyStallDecay((int16_t)pwmr, rtY_Right.n_mot, stallDecayModeActive, &stallDecayStateRight);
+        pwml = pwmlAfterDecay;
+        pwmr = pwmrAfterDecay;
+
+        #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
+          uint8_t stallActiveLeft  = (stallDecayStateLeft.stallTimerMs > 0U);
+          uint8_t stallActiveRight = (stallDecayStateRight.stallTimerMs > 0U);
+          uint8_t leftLimited = (ABS(pwmlBeforeDecay) > ABS(pwmlAfterDecay));
+          uint8_t rightLimited = (ABS(pwmrBeforeDecay) > ABS(pwmrAfterDecay));
+
+          if ((stallActiveLeft != prevStallActiveLeft) || (stallActiveRight != prevStallActiveRight)) {
+            printf("StallDecay state L:%u(%ums) R:%u(%ums) nL:%i nR:%i cmdInL:%i cmdOutL:%i cmdInR:%i cmdOutR:%i\r\n",
+              stallActiveLeft,
+              stallDecayStateLeft.stallTimerMs,
+              stallActiveRight,
+              stallDecayStateRight.stallTimerMs,
+              (int16_t)rtY_Left.n_mot,
+              (int16_t)rtY_Right.n_mot,
+              pwmlBeforeDecay,
+              pwmlAfterDecay,
+              pwmrBeforeDecay,
+              pwmrAfterDecay);
+            prevStallActiveLeft = stallActiveLeft;
+            prevStallActiveRight = stallActiveRight;
+          }
+
+          if ((stallActiveLeft || stallActiveRight) &&
+              (main_loop_counter % DEBUG_STALL_PRINT_INTERVAL_LOOPS == 0U) &&
+              (leftLimited || rightLimited)) {
+            printf("StallDecay act tL:%ums tR:%ums nL:%i nR:%i inL:%i outL:%i inR:%i outR:%i limL:%u limR:%u\r\n",
+              stallDecayStateLeft.stallTimerMs,
+              stallDecayStateRight.stallTimerMs,
+              (int16_t)rtY_Left.n_mot,
+              (int16_t)rtY_Right.n_mot,
+              pwmlBeforeDecay,
+              pwmlAfterDecay,
+              pwmrBeforeDecay,
+              pwmrAfterDecay,
+              leftLimited,
+              rightLimited);
+          }
+        #endif
+      }
     #endif
 
     #ifdef VARIANT_TRANSPOTTER
@@ -506,7 +578,7 @@ int main(void) {
         #if defined(DEBUG_SERIAL_PROTOCOL)
           process_debug();
         #else
-          printf("in1:%i in2:%i cmdL:%i cmdR:%i ErrL:%u ErrR:%u BatADC:%i BatV:%i TempADC:%i Temp:%i \r\n",
+          printf("in1:%i in2:%i cmdL:%i cmdR:%i ErrL:%u ErrR:%u BatADC:%i BatV:%i TempADC:%i Temp:%i StallL_t:%u StallR_t:%u CtrlMode:%u\r\n",
             input1[inIdx].raw,        // 1: INPUT1
             input2[inIdx].raw,        // 2: INPUT2
             cmdL,                     // 3: output command: [-1000, 1000]
@@ -516,7 +588,10 @@ int main(void) {
             adc_buffer.batt1,         // 7: for battery voltage calibration
             batVoltageCalib,          // 8: for verifying battery voltage calibration
             board_temp_adcFilt,       // 9: for board temperature calibration
-            board_temp_deg_c);        // 10: for verifying board temperature calibration
+            board_temp_deg_c,         // 10: for verifying board temperature calibration
+            stallDecayStateLeft.stallTimerMs,
+            stallDecayStateRight.stallTimerMs,
+            ctrlModReq);        // 10: for verifying board temperature calibration
         #endif
       }
     #endif
