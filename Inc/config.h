@@ -462,6 +462,17 @@
 #endif
 // ############################# END OF VARIANT_PWM SETTINGS ############################
 
+// ############################# PWM INPUT OFFSET SETTINGS ############################
+// Applies to RC PWM input channels after conversion to [-1000, 1000].
+// Positive value shifts channel command positive (e.g. incoming -120 with offset +120 => 0).
+#ifndef PWM_CH1_OFFSET
+  #define PWM_CH1_OFFSET         0
+#endif
+#ifndef PWM_CH2_OFFSET
+  #define PWM_CH2_OFFSET         0
+#endif
+// ######################### END OF PWM INPUT OFFSET SETTINGS #########################
+
 
 
 // ################################# VARIANT_IBUS SETTINGS ##############################
