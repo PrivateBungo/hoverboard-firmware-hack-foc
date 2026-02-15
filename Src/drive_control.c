@@ -65,6 +65,8 @@ int16_t DriveControl_ApplyStallDecay(int16_t torqueCmd, int16_t wheelSpeedRpm, u
   int16_t speedAbs;
   int16_t cmdSign;
   int32_t cmdMax;
+  uint16_t preemptMs;
+  uint16_t totalMs;
 
   if (!isTorqueMode) {
     state->stallTimerMs = 0;
@@ -75,28 +77,31 @@ int16_t DriveControl_ApplyStallDecay(int16_t torqueCmd, int16_t wheelSpeedRpm, u
   cmdAbs = (torqueCmd >= 0) ? torqueCmd : (int16_t)-torqueCmd;
   speedAbs = (wheelSpeedRpm >= 0) ? wheelSpeedRpm : (int16_t)-wheelSpeedRpm;
 
+  preemptMs = (STALL_DECAY_PREEMPT_MS > 0U) ? STALL_DECAY_PREEMPT_MS : 1U;
+  totalMs = (STALL_DECAY_TIME_MS > preemptMs) ? STALL_DECAY_TIME_MS : (uint16_t)(preemptMs + 1U);
+
   if ((speedAbs <= STALL_DECAY_SPEED_RPM) && (cmdAbs >= STALL_DECAY_CMD_TRIGGER)) {
-    if (state->stallTimerMs < STALL_DECAY_TIME_MS) {
+    if (state->stallTimerMs < totalMs) {
       uint16_t stepMs = DELAY_IN_MAIN_LOOP + 1U;
       uint16_t nextMs = state->stallTimerMs + stepMs;
-      state->stallTimerMs = (nextMs < STALL_DECAY_TIME_MS) ? nextMs : STALL_DECAY_TIME_MS;
+      state->stallTimerMs = (nextMs < totalMs) ? nextMs : totalMs;
     }
   } else {
     state->stallTimerMs = 0;
     return torqueCmd;
   }
 
-  if (state->stallTimerMs >= STALL_DECAY_PREEMPT_MS) {
+  if (state->stallTimerMs >= preemptMs) {
     cmdMax = STALL_DECAY_CMD_PREEMPT;
   } else {
-    cmdMax = 1000 - (((int32_t)(1000 - STALL_DECAY_CMD_PREEMPT) * state->stallTimerMs) / STALL_DECAY_PREEMPT_MS);
+    cmdMax = 1000 - (((int32_t)(1000 - STALL_DECAY_CMD_PREEMPT) * state->stallTimerMs) / preemptMs);
   }
 
-  if (state->stallTimerMs >= STALL_DECAY_TIME_MS) {
+  if (state->stallTimerMs >= totalMs) {
     cmdMax = STALL_DECAY_CMD_FLOOR;
-  } else if (state->stallTimerMs > STALL_DECAY_PREEMPT_MS) {
-    uint16_t decayWindowMs = STALL_DECAY_TIME_MS - STALL_DECAY_PREEMPT_MS;
-    uint16_t elapsedDecayMs = state->stallTimerMs - STALL_DECAY_PREEMPT_MS;
+  } else if (state->stallTimerMs > preemptMs) {
+    uint16_t decayWindowMs = totalMs - preemptMs;
+    uint16_t elapsedDecayMs = state->stallTimerMs - preemptMs;
     cmdMax = STALL_DECAY_CMD_PREEMPT - (((int32_t)(STALL_DECAY_CMD_PREEMPT - STALL_DECAY_CMD_FLOOR) * elapsedDecayMs) / decayWindowMs);
   }
 

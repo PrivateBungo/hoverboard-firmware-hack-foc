@@ -154,12 +154,12 @@
 // Limitation settings
 #define I_MOT_MAX       20              // [A] Maximum single motor current limit
 #define I_DC_MAX        24              // [A] Maximum stage2 DC Link current limit for Commutation and Sinusoidal types (final hard current protection; keep this above I_MOT_MAX)
-#define STALL_DECAY_SPEED_RPM    8      // [rpm] Stall detector threshold for torque decay (must be above n_stdStillDet ~= 3 rpm to react early)
-#define STALL_DECAY_CMD_TRIGGER  600    // [-] Torque command threshold where stall decay starts. Matches diagnostics threshold r_errInpTgtThres (=600 in integer units)
-#define STALL_DECAY_PREEMPT_MS   40     // [ms] Time allowed at high torque + near zero speed before forcing a pre-emptive torque clamp
-#define STALL_DECAY_CMD_PREEMPT  550    // [-] Immediate torque cap applied after STALL_DECAY_PREEMPT_MS. Must stay below STALL_DECAY_CMD_TRIGGER
-#define STALL_DECAY_CMD_FLOOR    250    // [-] Lowest allowed command during persistent stall to strongly reduce current while keeping some push
-#define STALL_DECAY_TIME_MS      90     // [ms] Time to decay from full command to STALL_DECAY_CMD_FLOOR so diagnostics are pre-empted
+#define STALL_DECAY_SPEED_RPM    25     // [rpm] Near-zero speed threshold for stall decay activation. Increase to react earlier while wheel is still almost blocked
+#define STALL_DECAY_CMD_TRIGGER  300    // [-] Torque command threshold where stall decay starts. Lower than diagnostics threshold to pre-empt shutdown
+#define STALL_DECAY_PREEMPT_MS   8      // [ms] Hold time before hard pre-emptive clamp. Very low on purpose for troubleshooting/verification
+#define STALL_DECAY_CMD_PREEMPT  120    // [-] Hard cap applied once pre-empt timer expires. Intentionally aggressive to make effect obvious
+#define STALL_DECAY_CMD_FLOOR    0      // [-] Persistent-stall floor. Set to 0 for troubleshooting so prolonged stall removes drive torque
+#define STALL_DECAY_TIME_MS      25     // [ms] Total stall-decay time to reach floor. Keep > STALL_DECAY_PREEMPT_MS
 #define N_MOT_MAX       1000            // [rpm] Maximum motor speed limit
 
 // Field Weakening / Phase Advance
