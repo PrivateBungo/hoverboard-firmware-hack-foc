@@ -82,6 +82,7 @@ extern volatile int pwml;               // global variable for pwm left. -1000 t
 extern volatile int pwmr;               // global variable for pwm right. -1000 to 1000
 
 extern uint8_t enable;                  // global variable for motor enable
+extern uint8_t ctrlModReq;              // global variable for final control mode request
 
 extern int16_t batVoltage;              // global variable for battery voltage
 
@@ -154,6 +155,8 @@ static int16_t    speed;                // local variable for speed. -1000 to 10
 #ifndef VARIANT_TRANSPOTTER
   static int16_t  steer;                // local variable for steering. -1000 to 1000
   static DriveControlState driveControlState;
+  static DriveControlStallDecayState stallDecayStateLeft;
+  static DriveControlStallDecayState stallDecayStateRight;
 #endif
 
 static uint32_t    buzzerTimer_prev = 0;
@@ -215,6 +218,8 @@ int main(void) {
 
   #ifndef VARIANT_TRANSPOTTER
     DriveControl_Init(&driveControlState);
+    DriveControl_ResetStallDecay(&stallDecayStateLeft);
+    DriveControl_ResetStallDecay(&stallDecayStateRight);
   #endif
   
   int32_t board_temp_adcFixdt = adc_buffer.temp << 16;  // Fixed-point filter output initialized with current ADC converted to fixed-point
@@ -273,6 +278,8 @@ int main(void) {
         beepShort(6);                     // make 2 beeps indicating the motor enable
         beepShort(4); HAL_Delay(100);
         DriveControl_ResetFilters(&driveControlState);
+        DriveControl_ResetStallDecay(&stallDecayStateLeft);
+        DriveControl_ResetStallDecay(&stallDecayStateRight);
         enable = 1;                       // enable motors
         #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
         printf("-- Motors enabled --\r\n");
@@ -350,6 +357,9 @@ int main(void) {
 
       DriveControl_MixCommands(speed, steer, &cmdL, &cmdR);
       DriveControl_MapCommandsToPwm(cmdL, cmdR, &pwml, &pwmr);
+
+      pwml = DriveControl_ApplyStallDecay((int16_t)pwml, rtY_Left.n_mot, (ctrlModReq == TRQ_MODE), &stallDecayStateLeft);
+      pwmr = DriveControl_ApplyStallDecay((int16_t)pwmr, rtY_Right.n_mot, (ctrlModReq == TRQ_MODE), &stallDecayStateRight);
     #endif
 
     #ifdef VARIANT_TRANSPOTTER

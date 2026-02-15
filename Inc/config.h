@@ -152,8 +152,12 @@
 #define DIAG_ENA        1               // [-] Motor Diagnostics enable flag: 0 = Disabled, 1 = Enabled (default)
 
 // Limitation settings
-#define I_MOT_MAX       15              // [A] Maximum single motor current limit
-#define I_DC_MAX        17              // [A] Maximum stage2 DC Link current limit for Commutation and Sinusoidal types (This is the final current protection. Above this value, current chopping is applied. To avoid this make sure that I_DC_MAX = I_MOT_MAX + 2A)
+#define I_MOT_MAX       20              // [A] Maximum single motor current limit
+#define I_DC_MAX        24              // [A] Maximum stage2 DC Link current limit for Commutation and Sinusoidal types (final hard current protection; keep this above I_MOT_MAX)
+#define STALL_DECAY_SPEED_RPM   8       // [rpm] Stall detector threshold for torque decay (must be above n_stdStillDet ~= 3 rpm to react early)
+#define STALL_DECAY_CMD_TRIGGER 600     // [-] Torque command threshold where stall decay starts. Matches diagnostics threshold r_errInpTgtThres (=600 in integer units)
+#define STALL_DECAY_CMD_FLOOR   500     // [-] Lowest allowed command during persistent stall. Kept below diagnostic trigger threshold with margin
+#define STALL_DECAY_TIME_MS     120     // [ms] Time to decay from full command to STALL_DECAY_CMD_FLOOR (faster than diagnostic qualification window)
 #define N_MOT_MAX       1000            // [rpm] Maximum motor speed limit
 
 // Field Weakening / Phase Advance
