@@ -160,6 +160,8 @@
 #define STALL_DECAY_CMD_PREEMPT  120    // [-] Hard cap applied once pre-empt timer expires. Intentionally aggressive to make effect obvious
 #define STALL_DECAY_CMD_FLOOR    0      // [-] Persistent-stall floor. Set to 0 for troubleshooting so prolonged stall removes drive torque
 #define STALL_DECAY_TIME_MS      25     // [ms] Total stall-decay time to reach floor. Keep > STALL_DECAY_PREEMPT_MS
+#define STALL_DECAY_IN_TRQ_MODE  1      // [-] 1: apply stall-decay in TRQ mode
+#define STALL_DECAY_IN_VLT_MODE  1      // [-] 1: apply stall-decay in VLT mode (useful for hovercar default config + troubleshooting)
 #define N_MOT_MAX       1000            // [rpm] Maximum motor speed limit
 
 // Field Weakening / Phase Advance

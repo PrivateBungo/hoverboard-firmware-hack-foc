@@ -244,6 +244,10 @@ int main(void) {
       (unsigned)STALL_DECAY_TIME_MS,
       (unsigned)(DELAY_IN_MAIN_LOOP + 1U),
       (unsigned)CTRL_MOD_REQ);
+    printf("StallDecay mode flags: inTRQ=%u inVLT=%u runtimeCtrlMode=%u\r\n",
+      (unsigned)STALL_DECAY_IN_TRQ_MODE,
+      (unsigned)STALL_DECAY_IN_VLT_MODE,
+      (unsigned)ctrlModReq);
   #endif
 
   #ifdef MULTI_MODE_DRIVE
@@ -380,8 +384,12 @@ int main(void) {
         int16_t pwmlAfterDecay;
         int16_t pwmrAfterDecay;
 
-        pwmlAfterDecay = DriveControl_ApplyStallDecay((int16_t)pwml, rtY_Left.n_mot, (ctrlModReq == TRQ_MODE), &stallDecayStateLeft);
-        pwmrAfterDecay = DriveControl_ApplyStallDecay((int16_t)pwmr, rtY_Right.n_mot, (ctrlModReq == TRQ_MODE), &stallDecayStateRight);
+        uint8_t stallDecayModeActive =
+          ((STALL_DECAY_IN_TRQ_MODE != 0U) && (ctrlModReq == TRQ_MODE)) ||
+          ((STALL_DECAY_IN_VLT_MODE != 0U) && (ctrlModReq == VLT_MODE));
+
+        pwmlAfterDecay = DriveControl_ApplyStallDecay((int16_t)pwml, rtY_Left.n_mot, stallDecayModeActive, &stallDecayStateLeft);
+        pwmrAfterDecay = DriveControl_ApplyStallDecay((int16_t)pwmr, rtY_Right.n_mot, stallDecayModeActive, &stallDecayStateRight);
         pwml = pwmlAfterDecay;
         pwmr = pwmrAfterDecay;
 
@@ -570,7 +578,7 @@ int main(void) {
         #if defined(DEBUG_SERIAL_PROTOCOL)
           process_debug();
         #else
-          printf("in1:%i in2:%i cmdL:%i cmdR:%i ErrL:%u ErrR:%u BatADC:%i BatV:%i TempADC:%i Temp:%i \r\n",
+          printf("in1:%i in2:%i cmdL:%i cmdR:%i ErrL:%u ErrR:%u BatADC:%i BatV:%i TempADC:%i Temp:%i StallL_t:%u StallR_t:%u CtrlMode:%u\r\n",
             input1[inIdx].raw,        // 1: INPUT1
             input2[inIdx].raw,        // 2: INPUT2
             cmdL,                     // 3: output command: [-1000, 1000]
@@ -580,7 +588,10 @@ int main(void) {
             adc_buffer.batt1,         // 7: for battery voltage calibration
             batVoltageCalib,          // 8: for verifying battery voltage calibration
             board_temp_adcFilt,       // 9: for board temperature calibration
-            board_temp_deg_c);        // 10: for verifying board temperature calibration
+            board_temp_deg_c,         // 10: for verifying board temperature calibration
+            stallDecayStateLeft.stallTimerMs,
+            stallDecayStateRight.stallTimerMs,
+            ctrlModReq);        // 10: for verifying board temperature calibration
         #endif
       }
     #endif
