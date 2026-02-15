@@ -169,6 +169,7 @@ void DMA1_Channel1_IRQHandler(void) {
   int ur, vr, wr;
   static boolean_T OverrunFlag = false;
   static uint32_t stallRecoverAtMs = 0;
+  static uint8_t stallRecoveryActive = 0;
 
   /* Check for overrun */
   if (OverrunFlag) {
@@ -181,14 +182,15 @@ void DMA1_Channel1_IRQHandler(void) {
   const uint8_t rightErrRaw = rtY_Right.z_errCode;
   const uint8_t stallErrActive = ((leftErrRaw & STALL_ERR_BIT) != 0U) || ((rightErrRaw & STALL_ERR_BIT) != 0U);
 
-  if (stallErrActive && (stallRecoverAtMs <= tickNowMs)) {
+  if (!stallRecoveryActive && stallErrActive) {
+    stallRecoveryActive = 1U;
     stallRecoverAtMs = tickNowMs + STALL_RECOVERY_DELAY_MS;
   }
 
-  const uint8_t stallGraceActive = (stallRecoverAtMs > tickNowMs);
+  const uint8_t stallGraceActive = stallRecoveryActive && (stallRecoverAtMs > tickNowMs);
 
-  /* During stall grace we reject control input and keep motors disabled. */
-  if (stallGraceActive) {
+  /* During stall recovery we reject control input and keep motors disabled. */
+  if (stallRecoveryActive) {
     enableFin = 0;
   } else {
     enableFin = enable && !leftErrRaw && !rightErrRaw;
@@ -226,12 +228,11 @@ void DMA1_Channel1_IRQHandler(void) {
   // motAngleLeft = rtY_Left.a_elecAngle;
 
     const uint8_t inputIsNeutral = (ABS(pwml) <= STALL_NEUTRAL_PWM_DEADBAND) && (ABS(pwmr) <= STALL_NEUTRAL_PWM_DEADBAND);
-    const uint8_t stallRecoveryReady = (stallRecoverAtMs != 0U) && !stallGraceActive && inputIsNeutral;
+    const uint8_t stallRecoveryReady = stallRecoveryActive && !stallGraceActive && inputIsNeutral;
 
     if (stallRecoveryReady) {
       rtDW_Left.UnitDelay_DSTATE_e &= (uint8_T)~STALL_ERR_BIT;
       rtDW_Right.UnitDelay_DSTATE_e &= (uint8_T)~STALL_ERR_BIT;
-      stallRecoverAtMs = 0U;
     }
 
     g_errCodeLeftEffective = rtY_Left.z_errCode;
@@ -240,6 +241,12 @@ void DMA1_Channel1_IRQHandler(void) {
     if (stallRecoveryReady) {
       g_errCodeLeftEffective &= (uint8_t)~STALL_ERR_BIT;
       g_errCodeRightEffective &= (uint8_t)~STALL_ERR_BIT;
+    }
+
+    /* Exit recovery only after raw stall bit is gone, preventing immediate retrigger loops. */
+    if (stallRecoveryActive && !stallGraceActive && !stallErrActive) {
+      stallRecoveryActive = 0U;
+      stallRecoverAtMs = 0U;
     }
 
     /* Apply commands */
