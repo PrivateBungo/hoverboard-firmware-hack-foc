@@ -6,7 +6,7 @@
 #define STALL_STATE_RAMP      (1U)
 #define STALL_STATE_COOLDOWN  (2U)
 
-#define STALL_RAMP_MS             (150U)
+#define STALL_RAMP_MS              (75U)
 #define STALL_DETECT_MS           (120U)
 #define STALL_RECOVERY_DELAY_MS (10000U)
 #define STALL_NEUTRAL_DEADBAND    (300)
