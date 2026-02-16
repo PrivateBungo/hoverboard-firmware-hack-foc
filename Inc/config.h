@@ -14,7 +14,7 @@
   //#define VARIANT_USART       // Variant for Serial control via USART3 input
   //#define VARIANT_NUNCHUK     // Variant for Nunchuk controlled vehicle build
   //#define VARIANT_PPM         // Variant for RC-Remote with PPM-Sum Signal
-  //#define VARIANT_PWM         // Variant for RC-Remote with PWM Signal
+  #define VARIANT_PWM         // Variant for RC-Remote with PWM Signal
   //#define VARIANT_IBUS        // Variant for RC-Remotes with FLYSKY IBUS
   //#define VARIANT_HOVERCAR    // Variant for HOVERCAR build
   //#define VARIANT_HOVERBOARD  // Variant for HOVERBOARD build
@@ -152,8 +152,16 @@
 #define DIAG_ENA        1               // [-] Motor Diagnostics enable flag: 0 = Disabled, 1 = Enabled (default)
 
 // Limitation settings
-#define I_MOT_MAX       15              // [A] Maximum single motor current limit
-#define I_DC_MAX        17              // [A] Maximum stage2 DC Link current limit for Commutation and Sinusoidal types (This is the final current protection. Above this value, current chopping is applied. To avoid this make sure that I_DC_MAX = I_MOT_MAX + 2A)
+#define I_MOT_MAX       20              // [A] Maximum single motor current limit
+#define I_DC_MAX        24              // [A] Maximum stage2 DC Link current limit for Commutation and Sinusoidal types (final hard current protection; keep this above I_MOT_MAX)
+#define STALL_DECAY_SPEED_RPM    8      // [rpm] Stall detector threshold for torque decay (must be above n_stdStillDet ~= 3 rpm to react early)
+#define STALL_DECAY_CMD_TRIGGER  600    // [-] Torque command threshold where stall decay starts. Matches diagnostics threshold r_errInpTgtThres (=600 in integer units)
+#define STALL_DECAY_PREEMPT_MS   40     // [ms] Time allowed at high torque + near zero speed before forcing a pre-emptive torque clamp
+#define STALL_DECAY_CMD_PREEMPT  550    // [-] Immediate torque cap applied after STALL_DECAY_PREEMPT_MS. Must stay below STALL_DECAY_CMD_TRIGGER
+#define STALL_DECAY_CMD_FLOOR    250    // [-] Lowest allowed command during persistent stall to strongly reduce current while keeping some push
+#define STALL_DECAY_TIME_MS      90     // [ms] Time to decay from full command to STALL_DECAY_CMD_FLOOR so diagnostics are pre-empted
+#define STALL_DECAY_IN_TRQ_MODE  1      // [-] 1: apply stall-decay in TRQ mode
+#define STALL_DECAY_IN_VLT_MODE  1      // [-] 1: apply stall-decay in VLT mode (useful for hovercar default config + troubleshooting)
 #define N_MOT_MAX       1000            // [rpm] Maximum motor speed limit
 
 // Field Weakening / Phase Advance
@@ -457,6 +465,17 @@
   #endif
 #endif
 // ############################# END OF VARIANT_PWM SETTINGS ############################
+
+// ############################# PWM INPUT OFFSET SETTINGS ############################
+// Applies to RC PWM input channels after conversion to [-1000, 1000].
+// Positive value shifts channel command positive (e.g. incoming -120 with offset +120 => 0).
+#ifndef PWM_CH1_OFFSET
+  #define PWM_CH1_OFFSET         120
+#endif
+#ifndef PWM_CH2_OFFSET
+  #define PWM_CH2_OFFSET         120
+#endif
+// ######################### END OF PWM INPUT OFFSET SETTINGS #########################
 
 
 
@@ -800,4 +819,3 @@
 // ############################# END OF VALIDATE SETTINGS ############################
 
 #endif
-

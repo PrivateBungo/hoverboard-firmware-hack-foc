@@ -914,14 +914,14 @@ void readInputRaw(void) {
 
     #if defined(CONTROL_PWM_LEFT)
     if (inIdx == CONTROL_PWM_LEFT) {
-      input1[inIdx].raw = (pwm_captured_ch1_value - 500) * 2;
-      input2[inIdx].raw = (pwm_captured_ch2_value - 500) * 2;
+      input1[inIdx].raw = CLAMP(((int16_t)pwm_captured_ch1_value - 500) * 2 + PWM_CH1_OFFSET, INPUT_MIN, INPUT_MAX);
+      input2[inIdx].raw = CLAMP(((int16_t)pwm_captured_ch2_value - 500) * 2 + PWM_CH2_OFFSET, INPUT_MIN, INPUT_MAX);
     }
     #endif
     #if defined(CONTROL_PWM_RIGHT)
     if (inIdx == CONTROL_PWM_RIGHT) {
-      input1[inIdx].raw = (pwm_captured_ch1_value - 500) * 2;
-      input2[inIdx].raw = (pwm_captured_ch2_value - 500) * 2;
+      input1[inIdx].raw = CLAMP(((int16_t)pwm_captured_ch1_value - 500) * 2 + PWM_CH1_OFFSET, INPUT_MIN, INPUT_MAX);
+      input2[inIdx].raw = CLAMP(((int16_t)pwm_captured_ch2_value - 500) * 2 + PWM_CH2_OFFSET, INPUT_MIN, INPUT_MAX);
     }
     #endif
 
@@ -1405,7 +1405,7 @@ void sideboardLeds(uint8_t *leds) {
     // Error handling
     // Critical error:  LED1 on (RED)     + high pitch beep (hadled in main)
     // Soft error:      LED3 on (YELLOW)  + low  pitch beep (hadled in main)
-    if (rtY_Left.z_errCode || rtY_Right.z_errCode) {
+    if (g_errCodeLeftEffective || g_errCodeRightEffective) {
       *leds |= LED1_SET;
       *leds &= ~LED3_SET & ~LED2_SET;
     }

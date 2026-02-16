@@ -40,6 +40,7 @@ Src/setup.c \
 Src/control.c \
 Src/comms.c \
 Src/util.c \
+Src/drive_control.c \
 Src/main.c \
 Src/bldc.c \
 Src/eeprom.c \
@@ -137,6 +138,8 @@ LDFLAGS = $(MCU) -specs=nano.specs -T$(LDSCRIPT) $(LIBDIR) $(LIBS) -Wl,-Map=$(BU
 # default action: build all
 all: $(BUILD_DIR)/$(TARGET).elf $(BUILD_DIR)/$(TARGET).hex $(BUILD_DIR)/$(TARGET).bin
 
+.PHONY: all format clean flash unlock prune-build artifacts
+
 
 #######################################
 # build the application
@@ -174,6 +177,13 @@ format:
 #######################################
 clean:
 	-rm -fR .dep $(BUILD_DIR)
+
+# Remove intermediate build products and keep only final artifacts (elf/hex/bin/map)
+prune-build:
+	-rm -f $(BUILD_DIR)/*.o $(BUILD_DIR)/*.d $(BUILD_DIR)/*.lst
+
+# Build and then keep only final artifacts in build/
+artifacts: all prune-build
 
 flash:
 	st-flash --reset write $(BUILD_DIR)/$(TARGET).bin 0x8000000
