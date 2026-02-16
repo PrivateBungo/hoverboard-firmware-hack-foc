@@ -53,6 +53,7 @@ Src/BLDC_controller.c \
 core/supervisor/input_supervisor.c \
 core/supervisor/mode_supervisor.c \
 core/supervisor/stall_supervisor.c \
+core/supervisor/wheel_command_supervisor.c \
 core/io/uart_reporting.c \
 core/io/input_decode.c \
 core/control/foc_adapter.c
