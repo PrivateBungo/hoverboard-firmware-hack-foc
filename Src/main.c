@@ -35,6 +35,7 @@
 #include "mode_supervisor.h"
 #include "stall_supervisor.h"
 #include "wheel_command_supervisor.h"
+#include "boot_neutral_supervisor.h"
 #include "uart_reporting.h"
 #include "input_decode.h"
 #include "foc_adapter.h"
@@ -153,6 +154,7 @@ static int16_t    speed;                // local variable for speed. -1000 to 10
   static DriveControlStallDecayState stallDecayStateLeft;
   static DriveControlStallDecayState stallDecayStateRight;
   static WheelCommandSupervisorState wheelCommandSupervisorState;
+  static BootNeutralSupervisorState bootNeutralState;
   static InputSupervisorState inputSupervisorState;
   static ModeSupervisorState modeSupervisorState;
   static StallSupervisorState stallSupervisorState;
@@ -224,6 +226,7 @@ int main(void) {
     DriveControl_ResetStallDecay(&stallDecayStateLeft);
     DriveControl_ResetStallDecay(&stallDecayStateRight);
     WheelCommandSupervisor_Init(&wheelCommandSupervisorState);
+    BootNeutralSupervisor_Init(&bootNeutralState, HAL_GetTick());
     InputSupervisor_Init(&inputSupervisorState);
     ModeSupervisor_Init(&modeSupervisorState, ctrlModReq);
     StallSupervisor_Init(&stallSupervisorState);
@@ -435,9 +438,44 @@ int main(void) {
       }
       #endif
 
-      DriveControl_MixCommands(speed, steer, &cmdL, &cmdR);
-      WheelCommandSupervisor_Update(&wheelCommandSupervisorState, cmdL, cmdR, &cmdL, &cmdR);
-      DriveControl_MapCommandsToPwm(cmdL, cmdR, &pwml, &pwmr);
+      {
+        int16_t cmdL_filt;
+        int16_t cmdR_filt;
+        int16_t cmdL_adj;
+        int16_t cmdR_adj;
+        uint8_t forcePwmZero;
+        uint32_t nowMs;
+        uint8_t rcPresentNow;
+
+        DriveControl_MixCommands(speed, steer, &cmdL_filt, &cmdR_filt);
+        WheelCommandSupervisor_Update(&wheelCommandSupervisorState, cmdL_filt, cmdR_filt, &cmdL_filt, &cmdR_filt);
+
+        cmdL = cmdL_filt;
+        cmdR = cmdR_filt;
+
+        nowMs = HAL_GetTick();
+        rcPresentNow = BootNeutralSupervisor_IsRcInputSignalPresent(inIdx, timeoutFlgGen, timeoutFlgSerial);
+
+        BootNeutralSupervisor_Process(&bootNeutralState,
+                                      nowMs,
+                                      rcPresentNow,
+                                      timeoutFlgGen,
+                                      timeoutFlgSerial,
+                                      ctrlModReq,
+                                      enable,
+                                      cmdL_filt,
+                                      cmdR_filt,
+                                      &cmdL_adj,
+                                      &cmdR_adj,
+                                      &forcePwmZero);
+
+        DriveControl_MapCommandsToPwm(cmdL_adj, cmdR_adj, &pwml, &pwmr);
+
+        if (forcePwmZero != 0U) {
+          pwml = 0;
+          pwmr = 0;
+        }
+      }
 
       {
         int16_t pwmlBeforeDecay = (int16_t)pwml;
