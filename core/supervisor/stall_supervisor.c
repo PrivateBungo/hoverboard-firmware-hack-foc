@@ -1,23 +1,29 @@
 #include "stall_supervisor.h"
 
+#include "config.h"
+
 #define STALL_ABS(a) (((a) < 0) ? (-(a)) : (a))
 
 #define STALL_STATE_NORMAL    (0U)
 #define STALL_STATE_RAMP      (1U)
-#define STALL_STATE_COOLDOWN  (2U)
+#define STALL_STATE_HOLD      (2U)
 
-#define STALL_RAMP_MS              (75U)
+#define STALL_RAMP_MS             (150U)
 #define STALL_DETECT_MS           (120U)
-#define STALL_RECOVERY_DELAY_MS (10000U)
-#define STALL_NEUTRAL_DEADBAND    (300)
-#define STALL_NEUTRAL_CLEAR_MS    (300U)
 #define STALL_CMD_TRIGGER         (350)
 #define STALL_SPEED_TRIGGER_RPM   (40)
 #define STALL_CURRENT_TRIGGER     (350)
 
-static uint8_t StallSupervisor_IsNeutralCommand(int16_t cmdLeft, int16_t cmdRight) {
-  return (uint8_t)((STALL_ABS(cmdLeft) <= STALL_NEUTRAL_DEADBAND) &&
-                   (STALL_ABS(cmdRight) <= STALL_NEUTRAL_DEADBAND));
+static int16_t StallSupervisor_TargetFromRequest(int16_t req) {
+  if (req > STALL_DECAY_CMD_FLOOR) {
+    return STALL_DECAY_CMD_FLOOR;
+  }
+
+  if (req < -STALL_DECAY_CMD_FLOOR) {
+    return (int16_t)-STALL_DECAY_CMD_FLOOR;
+  }
+
+  return req;
 }
 
 static uint8_t StallSupervisor_StallCondition(int16_t reqLeft,
@@ -44,9 +50,10 @@ void StallSupervisor_Init(StallSupervisorState *state) {
   state->state = STALL_STATE_NORMAL;
   state->stateSinceMs = 0U;
   state->detectSinceMs = 0U;
-  state->neutralSinceMs = 0U;
   state->rampStartLeft = 0;
   state->rampStartRight = 0;
+  state->rampTargetLeft = 0;
+  state->rampTargetRight = 0;
 }
 
 void StallSupervisor_Update(StallSupervisorState *state,
@@ -82,6 +89,8 @@ void StallSupervisor_Update(StallSupervisorState *state,
           state->stateSinceMs = tickNowMs;
           state->rampStartLeft = reqLeft;
           state->rampStartRight = reqRight;
+          state->rampTargetLeft = StallSupervisor_TargetFromRequest(reqLeft);
+          state->rampTargetRight = StallSupervisor_TargetFromRequest(reqRight);
         }
       } else {
         state->detectSinceMs = 0U;
@@ -92,58 +101,35 @@ void StallSupervisor_Update(StallSupervisorState *state,
       const uint32_t elapsedMs = tickNowMs - state->stateSinceMs;
 
       if (elapsedMs < STALL_RAMP_MS) {
-        const int32_t remainingMs = (int32_t)(STALL_RAMP_MS - elapsedMs);
-        *outLeft = (int16_t)((((int32_t)state->rampStartLeft) * remainingMs) / (int32_t)STALL_RAMP_MS);
-        *outRight = (int16_t)((((int32_t)state->rampStartRight) * remainingMs) / (int32_t)STALL_RAMP_MS);
+        const int32_t elapsed = (int32_t)elapsedMs;
+        const int32_t spanLeft = (int32_t)state->rampStartLeft - (int32_t)state->rampTargetLeft;
+        const int32_t spanRight = (int32_t)state->rampStartRight - (int32_t)state->rampTargetRight;
+        *outLeft = (int16_t)((int32_t)state->rampStartLeft - ((spanLeft * elapsed) / (int32_t)STALL_RAMP_MS));
+        *outRight = (int16_t)((int32_t)state->rampStartRight - ((spanRight * elapsed) / (int32_t)STALL_RAMP_MS));
       } else {
-        *outLeft = 0;
-        *outRight = 0;
-
-        if (stallCondition != 0U) {
-          state->state = STALL_STATE_COOLDOWN;
-          state->stateSinceMs = tickNowMs;
-          state->neutralSinceMs = 0U;
-          *driveEnableOut = 0U;
-        } else {
-          state->state = STALL_STATE_NORMAL;
-          state->stateSinceMs = tickNowMs;
-          state->detectSinceMs = 0U;
-        }
+        *outLeft = state->rampTargetLeft;
+        *outRight = state->rampTargetRight;
+        state->state = STALL_STATE_HOLD;
+        state->stateSinceMs = tickNowMs;
       }
       break;
     }
 
-    case STALL_STATE_COOLDOWN: {
-      const uint8_t neutralCommand = StallSupervisor_IsNeutralCommand(reqLeft, reqRight);
-
-      *outLeft = 0;
-      *outRight = 0;
-      *driveEnableOut = 0U;
-
-      if (neutralCommand != 0U) {
-        if (state->neutralSinceMs == 0U) {
-          state->neutralSinceMs = tickNowMs;
-        }
+    case STALL_STATE_HOLD:
+      if (stallCondition != 0U) {
+        *outLeft = StallSupervisor_TargetFromRequest(reqLeft);
+        *outRight = StallSupervisor_TargetFromRequest(reqRight);
       } else {
-        state->neutralSinceMs = 0U;
-      }
-
-      if ((tickNowMs - state->stateSinceMs) >= STALL_RECOVERY_DELAY_MS &&
-          (state->neutralSinceMs != 0U) &&
-          ((tickNowMs - state->neutralSinceMs) >= STALL_NEUTRAL_CLEAR_MS)) {
         state->state = STALL_STATE_NORMAL;
         state->stateSinceMs = tickNowMs;
         state->detectSinceMs = 0U;
-        state->neutralSinceMs = 0U;
       }
       break;
-    }
 
     default:
       state->state = STALL_STATE_NORMAL;
       state->stateSinceMs = tickNowMs;
       state->detectSinceMs = 0U;
-      state->neutralSinceMs = 0U;
       break;
   }
 }

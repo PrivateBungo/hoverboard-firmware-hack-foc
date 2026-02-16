@@ -7,9 +7,10 @@ typedef struct {
   uint8_t state;
   uint32_t stateSinceMs;
   uint32_t detectSinceMs;
-  uint32_t neutralSinceMs;
   int16_t rampStartLeft;
   int16_t rampStartRight;
+  int16_t rampTargetLeft;
+  int16_t rampTargetRight;
 } StallSupervisorState;
 
 void StallSupervisor_Init(StallSupervisorState *state);
