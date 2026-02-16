@@ -22,7 +22,6 @@
 
 #include <stdio.h>
 #include <stdlib.h> // for abs()
-#include <stddef.h>
 #include "stm32f1xx_hal.h"
 #include "defines.h"
 #include "setup.h"
@@ -36,10 +35,10 @@
 #include "mode_supervisor.h"
 #include "stall_supervisor.h"
 #include "wheel_command_supervisor.h"
+#include "boot_neutral_supervisor.h"
 #include "uart_reporting.h"
 #include "input_decode.h"
 #include "foc_adapter.h"
-#include "persist_config.h"
 
 #if defined(DEBUG_I2C_LCD) || defined(SUPPORT_LCD)
 #include "hd44780.h"
@@ -155,6 +154,7 @@ static int16_t    speed;                // local variable for speed. -1000 to 10
   static DriveControlStallDecayState stallDecayStateLeft;
   static DriveControlStallDecayState stallDecayStateRight;
   static WheelCommandSupervisorState wheelCommandSupervisorState;
+  static BootNeutralSupervisorState bootNeutralState;
   static InputSupervisorState inputSupervisorState;
   static ModeSupervisorState modeSupervisorState;
   static StallSupervisorState stallSupervisorState;
@@ -173,243 +173,7 @@ static MultipleTap MultipleTapBrake;    // define multiple tap functionality for
 
 static uint16_t rate = RATE; // Adjustable rate to support multiple drive modes on startup
 
-#define BOOT_NEUTRAL_OBSERVE_MS  (2000U)
-#define BOOT_NEUTRAL_STABLE_BAND (30)
-
-typedef enum {
-  BOOT_NEUTRAL_STATE_OBSERVE = 0,
-  BOOT_NEUTRAL_STATE_APPLY,
-  BOOT_NEUTRAL_STATE_RUN
-} BootNeutralState;
-
-typedef struct {
-  BootNeutralState state;
-  uint32_t boot_t0;
-  uint8_t rc_present_all_window;
-  uint8_t stable_neutral_all_window;
-  int32_t sumLeft;
-  int32_t sumRight;
-  uint16_t sampleCount;
-  int16_t neutralLeft;
-  int16_t neutralRight;
-  uint8_t neutral_active;
-} BootNeutralCalibrationState;
-
-static BootNeutralCalibrationState bootNeutralState;
-
-typedef struct __attribute__((packed)) {
-  uint32_t magic;
-  uint16_t version;
-  uint16_t size;
-  int16_t neutral_pwml;
-  int16_t neutral_pwmr;
-  uint16_t checksum;
-} PersistNeutralConfigRaw;
-
-#define PERSIST_CONFIG_FLASH_ADDR_DBG \
-  (FLASH_BASE + (((uint32_t)(*(uint16_t *)FLASHSIZE_BASE)) * 1024U) - FLASH_PAGE_SIZE)
-#define PERSIST_CONFIG_MAGIC_DBG (0x4E454355UL)
-
-static uint16_t Main_DebugPersistChecksum(const PersistNeutralConfigRaw *cfg) {
-  const uint8_t *raw;
-  uint16_t checksum;
-  uint16_t idx;
-
-  if (cfg == 0) {
-    return 0U;
-  }
-
-  raw = (const uint8_t *)cfg;
-  checksum = 0U;
-  for (idx = 0U; idx < (uint16_t)(offsetof(PersistNeutralConfigRaw, checksum)); idx++) {
-    checksum = (uint16_t)(checksum + raw[idx]);
-  }
-  return checksum;
-}
-
-static void Main_DebugPrintPersistNeutral(void) {
-  const PersistNeutralConfigRaw *cfg;
-  int16_t neutralL;
-  int16_t neutralR;
-  uint8_t valid;
-  uint16_t checksumCalc;
-
-  cfg = (const PersistNeutralConfigRaw *)PERSIST_CONFIG_FLASH_ADDR_DBG;
-  checksumCalc = Main_DebugPersistChecksum(cfg);
-  valid = PersistConfig_LoadNeutral(&neutralL, &neutralR);
-
-  if (valid != 0U) {
-    printf("PersistNeutral: valid=%u magic=0x%08lX ver=%u size=%u chk=0x%04X chk_calc=0x%04X nL=%i nR=%i\\r\\n",
-           (unsigned)valid,
-           (unsigned long)cfg->magic,
-           (unsigned)cfg->version,
-           (unsigned)cfg->size,
-           (unsigned)cfg->checksum,
-           (unsigned)checksumCalc,
-           (int)neutralL,
-           (int)neutralR);
-  } else {
-    printf("PersistNeutral: valid=0 (no stored config) magic=0x%08lX ver=%u size=%u chk=0x%04X chk_calc=0x%04X nLraw=%i nRraw=%i expMagic=0x%08lX\\r\\n",
-           (unsigned long)cfg->magic,
-           (unsigned)cfg->version,
-           (unsigned)cfg->size,
-           (unsigned)cfg->checksum,
-           (unsigned)checksumCalc,
-           (int)cfg->neutral_pwml,
-           (int)cfg->neutral_pwmr,
-           (unsigned long)PERSIST_CONFIG_MAGIC_DBG);
-  }
-}
-
-static void Main_DebugPrintApplyDecision(uint8_t learned,
-                                         uint8_t saveOk,
-                                         uint8_t loadValid,
-                                         int16_t neutralL,
-                                         int16_t neutralR) {
-  if (learned != 0U) {
-    printf("BOOTAPPLY rcAll=%u stabAll=%u n=%u learn nL=%i nR=%i save=%s beep=1\\r\\n",
-           (unsigned)bootNeutralState.rc_present_all_window,
-           (unsigned)bootNeutralState.stable_neutral_all_window,
-           (unsigned)bootNeutralState.sampleCount,
-           (int)neutralL,
-           (int)neutralR,
-           (saveOk != 0U) ? "OK" : "FAIL");
-  } else {
-    printf("BOOTAPPLY rcAll=%u stabAll=%u n=%u load valid=%u nL=%i nR=%i beep=0\\r\\n",
-           (unsigned)bootNeutralState.rc_present_all_window,
-           (unsigned)bootNeutralState.stable_neutral_all_window,
-           (unsigned)bootNeutralState.sampleCount,
-           (unsigned)loadValid,
-           (int)neutralL,
-           (int)neutralR);
-  }
-}
-
 #define STALL_ERR_BIT (0x04U)
-
-static uint8_t Main_IsRcInputSignalPresent(void) {
-  uint8_t present = 0U;
-
-  #if defined(CONTROL_PWM_LEFT)
-    if (inIdx == CONTROL_PWM_LEFT) {
-      present = (uint8_t)(timeoutFlgGen == 0U);
-    }
-  #endif
-
-  #if defined(CONTROL_PWM_RIGHT)
-    if (inIdx == CONTROL_PWM_RIGHT) {
-      present = (uint8_t)(timeoutFlgGen == 0U);
-    }
-  #endif
-
-  #if defined(CONTROL_PPM_LEFT)
-    if (inIdx == CONTROL_PPM_LEFT) {
-      present = (uint8_t)(timeoutFlgGen == 0U);
-    }
-  #endif
-
-  #if defined(CONTROL_PPM_RIGHT)
-    if (inIdx == CONTROL_PPM_RIGHT) {
-      present = (uint8_t)(timeoutFlgGen == 0U);
-    }
-  #endif
-
-  #if defined(CONTROL_SERIAL_USART2)
-    if (inIdx == CONTROL_SERIAL_USART2) {
-      present = (uint8_t)(timeoutFlgSerial == 0U);
-    }
-  #endif
-
-  #if defined(CONTROL_SERIAL_USART3)
-    if (inIdx == CONTROL_SERIAL_USART3) {
-      present = (uint8_t)(timeoutFlgSerial == 0U);
-    }
-  #endif
-
-  return present;
-}
-
-static void Main_InitBootNeutralCalibration(void) {
-  bootNeutralState.state = BOOT_NEUTRAL_STATE_OBSERVE;
-  bootNeutralState.boot_t0 = HAL_GetTick();
-  bootNeutralState.rc_present_all_window = 1U;
-  bootNeutralState.stable_neutral_all_window = 1U;
-  bootNeutralState.sumLeft = 0;
-  bootNeutralState.sumRight = 0;
-  bootNeutralState.sampleCount = 0U;
-  bootNeutralState.neutralLeft = 0;
-  bootNeutralState.neutralRight = 0;
-  bootNeutralState.neutral_active = 0U;
-
-  Main_DebugPrintPersistNeutral();
-}
-
-static void Main_UpdateBootNeutralObservation(int16_t filteredLeft, int16_t filteredRight) {
-  uint8_t rcPresent;
-  uint8_t stableNow;
-
-  if (bootNeutralState.state == BOOT_NEUTRAL_STATE_OBSERVE) {
-    rcPresent = Main_IsRcInputSignalPresent();
-    stableNow = (uint8_t)((ABS(filteredLeft) <= BOOT_NEUTRAL_STABLE_BAND) &&
-                          (ABS(filteredRight) <= BOOT_NEUTRAL_STABLE_BAND));
-
-    if (rcPresent == 0U) {
-      bootNeutralState.rc_present_all_window = 0U;
-    }
-
-    if (stableNow == 0U) {
-      bootNeutralState.stable_neutral_all_window = 0U;
-    }
-
-    if (rcPresent != 0U) {
-      bootNeutralState.sumLeft += filteredLeft;
-      bootNeutralState.sumRight += filteredRight;
-      if (bootNeutralState.sampleCount < 65535U) {
-        bootNeutralState.sampleCount++;
-      }
-    }
-
-    if ((HAL_GetTick() - bootNeutralState.boot_t0) >= BOOT_NEUTRAL_OBSERVE_MS) {
-      bootNeutralState.state = BOOT_NEUTRAL_STATE_APPLY;
-    }
-  }
-
-  if (bootNeutralState.state == BOOT_NEUTRAL_STATE_APPLY) {
-    uint8_t learned = 0U;
-    uint8_t saveOk = 0U;
-    uint8_t loadValid = 0U;
-
-    if ((bootNeutralState.rc_present_all_window != 0U) &&
-        (bootNeutralState.stable_neutral_all_window != 0U) &&
-        (bootNeutralState.sampleCount > 0U)) {
-      bootNeutralState.neutralLeft = (int16_t)(bootNeutralState.sumLeft / (int32_t)bootNeutralState.sampleCount);
-      bootNeutralState.neutralRight = (int16_t)(bootNeutralState.sumRight / (int32_t)bootNeutralState.sampleCount);
-      learned = 1U;
-      saveOk = PersistConfig_SaveNeutral(bootNeutralState.neutralLeft, bootNeutralState.neutralRight);
-      if (saveOk != 0U) {
-        beepShort(7);
-        beepShort(7);
-      }
-    } else {
-      int16_t savedLeft = 0;
-      int16_t savedRight = 0;
-      loadValid = PersistConfig_LoadNeutral(&savedLeft, &savedRight);
-      if (loadValid != 0U) {
-        bootNeutralState.neutralLeft = savedLeft;
-        bootNeutralState.neutralRight = savedRight;
-      }
-    }
-
-    Main_DebugPrintApplyDecision(learned,
-                                 saveOk,
-                                 loadValid,
-                                 bootNeutralState.neutralLeft,
-                                 bootNeutralState.neutralRight);
-
-    bootNeutralState.neutral_active = 1U;
-    bootNeutralState.state = BOOT_NEUTRAL_STATE_RUN;
-  }
-}
 
 #ifdef MULTI_MODE_DRIVE
   static uint8_t drive_mode;
@@ -462,10 +226,10 @@ int main(void) {
     DriveControl_ResetStallDecay(&stallDecayStateLeft);
     DriveControl_ResetStallDecay(&stallDecayStateRight);
     WheelCommandSupervisor_Init(&wheelCommandSupervisorState);
+    BootNeutralSupervisor_Init(&bootNeutralState, HAL_GetTick());
     InputSupervisor_Init(&inputSupervisorState);
     ModeSupervisor_Init(&modeSupervisorState, ctrlModReq);
     StallSupervisor_Init(&stallSupervisorState);
-    Main_InitBootNeutralCalibration();
   #endif
 
   #if defined(FEEDBACK_SERIAL_USART2) || defined(FEEDBACK_SERIAL_USART3)
@@ -675,15 +439,13 @@ int main(void) {
       #endif
 
       {
-        static uint32_t bootDbgLastMs = 0U;
         int16_t cmdL_filt;
         int16_t cmdR_filt;
         int16_t cmdL_adj;
         int16_t cmdR_adj;
+        uint8_t forcePwmZero;
         uint32_t nowMs;
-        uint32_t bootElapsedMs;
         uint8_t rcPresentNow;
-        uint8_t stableNow;
 
         DriveControl_MixCommands(speed, steer, &cmdL_filt, &cmdR_filt);
         WheelCommandSupervisor_Update(&wheelCommandSupervisorState, cmdL_filt, cmdR_filt, &cmdL_filt, &cmdR_filt);
@@ -691,48 +453,27 @@ int main(void) {
         cmdL = cmdL_filt;
         cmdR = cmdR_filt;
 
-        Main_UpdateBootNeutralObservation(cmdL_filt, cmdR_filt);
+        nowMs = HAL_GetTick();
+        rcPresentNow = BootNeutralSupervisor_IsRcInputSignalPresent(inIdx, timeoutFlgGen, timeoutFlgSerial);
 
-        cmdL_adj = cmdL_filt;
-        cmdR_adj = cmdR_filt;
-        if (bootNeutralState.neutral_active != 0U) {
-          cmdL_adj = (int16_t)(cmdL_adj - bootNeutralState.neutralLeft);
-          cmdR_adj = (int16_t)(cmdR_adj - bootNeutralState.neutralRight);
-        }
+        BootNeutralSupervisor_Process(&bootNeutralState,
+                                      nowMs,
+                                      rcPresentNow,
+                                      timeoutFlgGen,
+                                      timeoutFlgSerial,
+                                      ctrlModReq,
+                                      enable,
+                                      cmdL_filt,
+                                      cmdR_filt,
+                                      &cmdL_adj,
+                                      &cmdR_adj,
+                                      &forcePwmZero);
 
         DriveControl_MapCommandsToPwm(cmdL_adj, cmdR_adj, &pwml, &pwmr);
 
-        if (bootNeutralState.state == BOOT_NEUTRAL_STATE_OBSERVE) {
+        if (forcePwmZero != 0U) {
           pwml = 0;
           pwmr = 0;
-        }
-
-        nowMs = HAL_GetTick();
-        bootElapsedMs = nowMs - bootNeutralState.boot_t0;
-        rcPresentNow = Main_IsRcInputSignalPresent();
-        stableNow = (uint8_t)((ABS(cmdL_filt) <= BOOT_NEUTRAL_STABLE_BAND) &&
-                              (ABS(cmdR_filt) <= BOOT_NEUTRAL_STABLE_BAND));
-
-        if ((bootElapsedMs <= 3000U) && ((nowMs - bootDbgLastMs) >= 200U)) {
-          bootDbgLastMs = nowMs;
-          printf("BOOTDBG t=%lu el=%lu st=%u nAct=%u rc=%u toGEN=%u toSER=%u stab=%u band=%u cmdF=(%i,%i) cmdA=(%i,%i) pwm=(%i,%i) ctrl=%u ena=%u\\r\\n",
-                 (unsigned long)nowMs,
-                 (unsigned long)bootElapsedMs,
-                 (unsigned)bootNeutralState.state,
-                 (unsigned)bootNeutralState.neutral_active,
-                 (unsigned)rcPresentNow,
-                 (unsigned)timeoutFlgGen,
-                 (unsigned)timeoutFlgSerial,
-                 (unsigned)stableNow,
-                 (unsigned)BOOT_NEUTRAL_STABLE_BAND,
-                 (int)cmdL_filt,
-                 (int)cmdR_filt,
-                 (int)cmdL_adj,
-                 (int)cmdR_adj,
-                 (int)pwml,
-                 (int)pwmr,
-                 (unsigned)ctrlModReq,
-                 (unsigned)enable);
         }
       }
 
