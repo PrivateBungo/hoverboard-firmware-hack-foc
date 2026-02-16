@@ -914,14 +914,14 @@ void readInputRaw(void) {
 
     #if defined(CONTROL_PWM_LEFT)
     if (inIdx == CONTROL_PWM_LEFT) {
-      input1[inIdx].raw = CLAMP(((int16_t)pwm_captured_ch1_value - 500) * 2 + PWM_CH1_OFFSET, INPUT_MIN, INPUT_MAX);
-      input2[inIdx].raw = CLAMP(((int16_t)pwm_captured_ch2_value - 500) * 2 + PWM_CH2_OFFSET, INPUT_MIN, INPUT_MAX);
+      input1[inIdx].raw = CLAMP(((int16_t)pwm_captured_ch1_value - 500) * 2, INPUT_MIN, INPUT_MAX);
+      input2[inIdx].raw = CLAMP(((int16_t)pwm_captured_ch2_value - 500) * 2, INPUT_MIN, INPUT_MAX);
     }
     #endif
     #if defined(CONTROL_PWM_RIGHT)
     if (inIdx == CONTROL_PWM_RIGHT) {
-      input1[inIdx].raw = CLAMP(((int16_t)pwm_captured_ch1_value - 500) * 2 + PWM_CH1_OFFSET, INPUT_MIN, INPUT_MAX);
-      input2[inIdx].raw = CLAMP(((int16_t)pwm_captured_ch2_value - 500) * 2 + PWM_CH2_OFFSET, INPUT_MIN, INPUT_MAX);
+      input1[inIdx].raw = CLAMP(((int16_t)pwm_captured_ch1_value - 500) * 2, INPUT_MIN, INPUT_MAX);
+      input2[inIdx].raw = CLAMP(((int16_t)pwm_captured_ch2_value - 500) * 2, INPUT_MIN, INPUT_MAX);
     }
     #endif
 
@@ -1784,5 +1784,4 @@ void multipleTapDet(int16_t u, uint32_t timeNow, MultipleTap *x) {
   x->b_hysteresis 	= b_hyst;
   x->t_timePrev 	  = t_time;
 }
-
 

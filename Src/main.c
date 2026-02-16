@@ -38,6 +38,7 @@
 #include "uart_reporting.h"
 #include "input_decode.h"
 #include "foc_adapter.h"
+#include "persist_config.h"
 
 #if defined(DEBUG_I2C_LCD) || defined(SUPPORT_LCD)
 #include "hd44780.h"
@@ -171,7 +172,123 @@ static MultipleTap MultipleTapBrake;    // define multiple tap functionality for
 
 static uint16_t rate = RATE; // Adjustable rate to support multiple drive modes on startup
 
+#define BOOT_NEUTRAL_OBSERVE_MS  (2000U)
+#define BOOT_NEUTRAL_STABLE_BAND (30)
+
+typedef struct {
+  uint32_t observeStartTick;
+  int32_t sumLeft;
+  int32_t sumRight;
+  uint16_t sampleCount;
+  int16_t neutralLeft;
+  int16_t neutralRight;
+  uint8_t rcPresentContinuous;
+  uint8_t neutralStableContinuous;
+  uint8_t applyReady;
+} BootNeutralCalibrationState;
+
+static BootNeutralCalibrationState bootNeutralState;
+
 #define STALL_ERR_BIT (0x04U)
+
+static uint8_t Main_IsRcInputSignalPresent(void) {
+  uint8_t present = 0U;
+
+  #if defined(CONTROL_PWM_LEFT)
+    if (inIdx == CONTROL_PWM_LEFT) {
+      present = (uint8_t)(timeoutFlgGen == 0U);
+    }
+  #endif
+
+  #if defined(CONTROL_PWM_RIGHT)
+    if (inIdx == CONTROL_PWM_RIGHT) {
+      present = (uint8_t)(timeoutFlgGen == 0U);
+    }
+  #endif
+
+  #if defined(CONTROL_PPM_LEFT)
+    if (inIdx == CONTROL_PPM_LEFT) {
+      present = (uint8_t)(timeoutFlgGen == 0U);
+    }
+  #endif
+
+  #if defined(CONTROL_PPM_RIGHT)
+    if (inIdx == CONTROL_PPM_RIGHT) {
+      present = (uint8_t)(timeoutFlgGen == 0U);
+    }
+  #endif
+
+  #if defined(CONTROL_SERIAL_USART2)
+    if (inIdx == CONTROL_SERIAL_USART2) {
+      present = (uint8_t)(timeoutFlgSerial == 0U);
+    }
+  #endif
+
+  #if defined(CONTROL_SERIAL_USART3)
+    if (inIdx == CONTROL_SERIAL_USART3) {
+      present = (uint8_t)(timeoutFlgSerial == 0U);
+    }
+  #endif
+
+  return present;
+}
+
+static void Main_InitBootNeutralCalibration(void) {
+  bootNeutralState.observeStartTick = HAL_GetTick();
+  bootNeutralState.sumLeft = 0;
+  bootNeutralState.sumRight = 0;
+  bootNeutralState.sampleCount = 0U;
+  bootNeutralState.neutralLeft = 0;
+  bootNeutralState.neutralRight = 0;
+  bootNeutralState.rcPresentContinuous = 1U;
+  bootNeutralState.neutralStableContinuous = 1U;
+  bootNeutralState.applyReady = 0U;
+}
+
+static void Main_UpdateBootNeutralObservation(int16_t filteredLeft, int16_t filteredRight) {
+  uint8_t rcPresent;
+
+  if (bootNeutralState.applyReady != 0U) {
+    return;
+  }
+
+  if ((HAL_GetTick() - bootNeutralState.observeStartTick) < BOOT_NEUTRAL_OBSERVE_MS) {
+    rcPresent = Main_IsRcInputSignalPresent();
+    if (rcPresent == 0U) {
+      bootNeutralState.rcPresentContinuous = 0U;
+    }
+
+    if ((ABS(filteredLeft) > BOOT_NEUTRAL_STABLE_BAND) || (ABS(filteredRight) > BOOT_NEUTRAL_STABLE_BAND)) {
+      bootNeutralState.neutralStableContinuous = 0U;
+    }
+
+    bootNeutralState.sumLeft += filteredLeft;
+    bootNeutralState.sumRight += filteredRight;
+    if (bootNeutralState.sampleCount < 65535U) {
+      bootNeutralState.sampleCount++;
+    }
+  } else {
+    if ((bootNeutralState.rcPresentContinuous != 0U) &&
+        (bootNeutralState.neutralStableContinuous != 0U) &&
+        (bootNeutralState.sampleCount > 0U)) {
+      bootNeutralState.neutralLeft = (int16_t)(bootNeutralState.sumLeft / (int32_t)bootNeutralState.sampleCount);
+      bootNeutralState.neutralRight = (int16_t)(bootNeutralState.sumRight / (int32_t)bootNeutralState.sampleCount);
+      if (PersistConfig_SaveNeutral(bootNeutralState.neutralLeft, bootNeutralState.neutralRight) != 0U) {
+        beepShort(7);
+        beepShort(7);
+      }
+    } else {
+      int16_t savedLeft = 0;
+      int16_t savedRight = 0;
+      if (PersistConfig_LoadNeutral(&savedLeft, &savedRight) != 0U) {
+        bootNeutralState.neutralLeft = savedLeft;
+        bootNeutralState.neutralRight = savedRight;
+      }
+    }
+
+    bootNeutralState.applyReady = 1U;
+  }
+}
 
 #ifdef MULTI_MODE_DRIVE
   static uint8_t drive_mode;
@@ -227,6 +344,7 @@ int main(void) {
     InputSupervisor_Init(&inputSupervisorState);
     ModeSupervisor_Init(&modeSupervisorState, ctrlModReq);
     StallSupervisor_Init(&stallSupervisorState);
+    Main_InitBootNeutralCalibration();
   #endif
 
   #if defined(FEEDBACK_SERIAL_USART2) || defined(FEEDBACK_SERIAL_USART3)
@@ -437,6 +555,13 @@ int main(void) {
 
       DriveControl_MixCommands(speed, steer, &cmdL, &cmdR);
       WheelCommandSupervisor_Update(&wheelCommandSupervisorState, cmdL, cmdR, &cmdL, &cmdR);
+
+      Main_UpdateBootNeutralObservation(cmdL, cmdR);
+      if (bootNeutralState.applyReady != 0U) {
+        cmdL = (int16_t)(cmdL - bootNeutralState.neutralLeft);
+        cmdR = (int16_t)(cmdR - bootNeutralState.neutralRight);
+      }
+
       DriveControl_MapCommandsToPwm(cmdL, cmdR, &pwml, &pwmr);
 
       {
