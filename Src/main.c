@@ -38,6 +38,7 @@
 #include "uart_reporting.h"
 #include "input_decode.h"
 #include "foc_adapter.h"
+#include "persist_config.h"
 
 #if defined(DEBUG_I2C_LCD) || defined(SUPPORT_LCD)
 #include "hd44780.h"
@@ -149,6 +150,8 @@ static uint8_t sideboard_leds_R;
 static int16_t    speed;                // local variable for speed. -1000 to 1000
 #ifndef VARIANT_TRANSPOTTER
   static int16_t  steer;                // local variable for steering. -1000 to 1000
+  static int16_t  neutralOffsetPwml;
+  static int16_t  neutralOffsetPwmr;
   static DriveControlState driveControlState;
   static DriveControlStallDecayState stallDecayStateLeft;
   static DriveControlStallDecayState stallDecayStateRight;
@@ -172,6 +175,58 @@ static MultipleTap MultipleTapBrake;    // define multiple tap functionality for
 static uint16_t rate = RATE; // Adjustable rate to support multiple drive modes on startup
 
 #define STALL_ERR_BIT (0x04U)
+
+#ifndef VARIANT_TRANSPOTTER
+  #define NEUTRAL_OBSERVE_WINDOW_MS      (2000U)
+  #define NEUTRAL_STABLE_BAND_COUNTS     (30)
+
+  typedef enum {
+    NEUTRAL_CAL_BOOT_OBSERVE = 0,
+    NEUTRAL_CAL_ACTIVE
+  } NeutralCalState;
+
+  static uint8_t NeutralCal_IsRcInputSelected(void) {
+    #if defined(CONTROL_PPM_LEFT)
+    if (inIdx == CONTROL_PPM_LEFT) {
+      return 1U;
+    }
+    #endif
+
+    #if defined(CONTROL_PPM_RIGHT)
+    if (inIdx == CONTROL_PPM_RIGHT) {
+      return 1U;
+    }
+    #endif
+
+    #if defined(CONTROL_PWM_LEFT)
+    if (inIdx == CONTROL_PWM_LEFT) {
+      return 1U;
+    }
+    #endif
+
+    #if defined(CONTROL_PWM_RIGHT)
+    if (inIdx == CONTROL_PWM_RIGHT) {
+      return 1U;
+    }
+    #endif
+
+    #ifdef CONTROL_IBUS
+      #if defined(CONTROL_SERIAL_USART2)
+      if (inIdx == CONTROL_SERIAL_USART2) {
+        return 1U;
+      }
+      #endif
+
+      #if defined(CONTROL_SERIAL_USART3)
+      if (inIdx == CONTROL_SERIAL_USART3) {
+        return 1U;
+      }
+      #endif
+    #endif
+
+    return 0U;
+  }
+#endif
 
 #ifdef MULTI_MODE_DRIVE
   static uint8_t drive_mode;
@@ -220,6 +275,17 @@ int main(void) {
   HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_SET);
 
   #ifndef VARIANT_TRANSPOTTER
+    uint32_t neutralObserveStartTick = HAL_GetTick();
+    uint8_t neutralRcPresentContinuous = 1U;
+    uint8_t neutralStableContinuous = 1U;
+    int32_t neutralPwmlSum = 0;
+    int32_t neutralPwmrSum = 0;
+    uint16_t neutralSampleCount = 0U;
+    NeutralCalState neutralCalState = NEUTRAL_CAL_BOOT_OBSERVE;
+
+    neutralOffsetPwml = 0;
+    neutralOffsetPwmr = 0;
+
     DriveControl_Init(&driveControlState);
     DriveControl_ResetStallDecay(&stallDecayStateLeft);
     DriveControl_ResetStallDecay(&stallDecayStateRight);
@@ -438,6 +504,52 @@ int main(void) {
       DriveControl_MixCommands(speed, steer, &cmdL, &cmdR);
       WheelCommandSupervisor_Update(&wheelCommandSupervisorState, cmdL, cmdR, &cmdL, &cmdR);
       DriveControl_MapCommandsToPwm(cmdL, cmdR, &pwml, &pwmr);
+
+      if (neutralCalState == NEUTRAL_CAL_BOOT_OBSERVE) {
+        uint8_t rcSignalPresent = (uint8_t)((NeutralCal_IsRcInputSelected() != 0U) && (InputSupervisor_AnyTimeout(&inputSupervisorState) == 0U));
+
+        if (rcSignalPresent == 0U) {
+          neutralRcPresentContinuous = 0U;
+        }
+
+        if ((ABS((int16_t)pwml) > NEUTRAL_STABLE_BAND_COUNTS) || (ABS((int16_t)pwmr) > NEUTRAL_STABLE_BAND_COUNTS)) {
+          neutralStableContinuous = 0U;
+        }
+
+        neutralPwmlSum += (int16_t)pwml;
+        neutralPwmrSum += (int16_t)pwmr;
+        if (neutralSampleCount < UINT16_MAX) {
+          neutralSampleCount++;
+        }
+
+        if ((HAL_GetTick() - neutralObserveStartTick) >= NEUTRAL_OBSERVE_WINDOW_MS) {
+          int16_t learnedNeutralPwml = 0;
+          int16_t learnedNeutralPwmr = 0;
+
+          if ((neutralRcPresentContinuous != 0U) && (neutralStableContinuous != 0U) && (neutralSampleCount > 0U)) {
+            learnedNeutralPwml = (int16_t)(neutralPwmlSum / neutralSampleCount);
+            learnedNeutralPwmr = (int16_t)(neutralPwmrSum / neutralSampleCount);
+            neutralOffsetPwml = learnedNeutralPwml;
+            neutralOffsetPwmr = learnedNeutralPwmr;
+
+            PersistConfig_SaveNeutral(learnedNeutralPwml, learnedNeutralPwmr);
+            beepShort(6);
+            beepShort(6);
+          } else {
+            if (PersistConfig_LoadNeutral(&neutralOffsetPwml, &neutralOffsetPwmr) == 0U) {
+              neutralOffsetPwml = 0;
+              neutralOffsetPwmr = 0;
+            }
+          }
+
+          neutralCalState = NEUTRAL_CAL_ACTIVE;
+        }
+      }
+
+      if (neutralCalState == NEUTRAL_CAL_ACTIVE) {
+        pwml = LIMIT(((int16_t)pwml - neutralOffsetPwml), 1000);
+        pwmr = LIMIT(((int16_t)pwmr - neutralOffsetPwmr), 1000);
+      }
 
       {
         int16_t pwmlBeforeDecay = (int16_t)pwml;
