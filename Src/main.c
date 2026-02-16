@@ -22,6 +22,7 @@
 
 #include <stdio.h>
 #include <stdlib.h> // for abs()
+#include <limits.h>
 #include "stm32f1xx_hal.h"
 #include "defines.h"
 #include "setup.h"
@@ -174,6 +175,7 @@ static uint16_t rate = RATE; // Adjustable rate to support multiple drive modes 
 
 #define BOOT_NEUTRAL_OBSERVE_MS  (2000U)
 #define BOOT_NEUTRAL_STABLE_BAND (30)
+#define BOOT_NEUTRAL_MAX_ABS     (250)
 
 typedef struct {
   uint32_t observeStartTick;
@@ -182,9 +184,12 @@ typedef struct {
   uint16_t sampleCount;
   int16_t neutralLeft;
   int16_t neutralRight;
+  int16_t minLeft;
+  int16_t maxLeft;
+  int16_t minRight;
+  int16_t maxRight;
   uint8_t rcObserved;
   uint8_t rcMissingAfterObserved;
-  uint8_t neutralStableContinuous;
   uint8_t applyReady;
 } BootNeutralCalibrationState;
 
@@ -241,9 +246,12 @@ static void Main_InitBootNeutralCalibration(void) {
   bootNeutralState.sampleCount = 0U;
   bootNeutralState.neutralLeft = 0;
   bootNeutralState.neutralRight = 0;
+  bootNeutralState.minLeft = INT16_MAX;
+  bootNeutralState.maxLeft = INT16_MIN;
+  bootNeutralState.minRight = INT16_MAX;
+  bootNeutralState.maxRight = INT16_MIN;
   bootNeutralState.rcObserved = 0U;
   bootNeutralState.rcMissingAfterObserved = 0U;
-  bootNeutralState.neutralStableContinuous = 1U;
   bootNeutralState.applyReady = 0U;
 }
 
@@ -259,8 +267,17 @@ static void Main_UpdateBootNeutralObservation(int16_t filteredLeft, int16_t filt
     if (rcPresent != 0U) {
       bootNeutralState.rcObserved = 1U;
 
-      if ((ABS(filteredLeft) > BOOT_NEUTRAL_STABLE_BAND) || (ABS(filteredRight) > BOOT_NEUTRAL_STABLE_BAND)) {
-        bootNeutralState.neutralStableContinuous = 0U;
+      if (filteredLeft < bootNeutralState.minLeft) {
+        bootNeutralState.minLeft = filteredLeft;
+      }
+      if (filteredLeft > bootNeutralState.maxLeft) {
+        bootNeutralState.maxLeft = filteredLeft;
+      }
+      if (filteredRight < bootNeutralState.minRight) {
+        bootNeutralState.minRight = filteredRight;
+      }
+      if (filteredRight > bootNeutralState.maxRight) {
+        bootNeutralState.maxRight = filteredRight;
       }
 
       bootNeutralState.sumLeft += filteredLeft;
@@ -272,12 +289,29 @@ static void Main_UpdateBootNeutralObservation(int16_t filteredLeft, int16_t filt
       bootNeutralState.rcMissingAfterObserved = 1U;
     }
   } else {
+    int16_t avgLeft;
+    int16_t avgRight;
+    int16_t spanLeft;
+    int16_t spanRight;
+
+    avgLeft = (bootNeutralState.sampleCount > 0U)
+      ? (int16_t)(bootNeutralState.sumLeft / (int32_t)bootNeutralState.sampleCount)
+      : 0;
+    avgRight = (bootNeutralState.sampleCount > 0U)
+      ? (int16_t)(bootNeutralState.sumRight / (int32_t)bootNeutralState.sampleCount)
+      : 0;
+    spanLeft = (int16_t)(bootNeutralState.maxLeft - bootNeutralState.minLeft);
+    spanRight = (int16_t)(bootNeutralState.maxRight - bootNeutralState.minRight);
+
     if ((bootNeutralState.rcObserved != 0U) &&
         (bootNeutralState.rcMissingAfterObserved == 0U) &&
-        (bootNeutralState.neutralStableContinuous != 0U) &&
-        (bootNeutralState.sampleCount > 0U)) {
-      bootNeutralState.neutralLeft = (int16_t)(bootNeutralState.sumLeft / (int32_t)bootNeutralState.sampleCount);
-      bootNeutralState.neutralRight = (int16_t)(bootNeutralState.sumRight / (int32_t)bootNeutralState.sampleCount);
+        (bootNeutralState.sampleCount > 0U) &&
+        (spanLeft <= BOOT_NEUTRAL_STABLE_BAND) &&
+        (spanRight <= BOOT_NEUTRAL_STABLE_BAND) &&
+        (ABS(avgLeft) <= BOOT_NEUTRAL_MAX_ABS) &&
+        (ABS(avgRight) <= BOOT_NEUTRAL_MAX_ABS)) {
+      bootNeutralState.neutralLeft = avgLeft;
+      bootNeutralState.neutralRight = avgRight;
       if (PersistConfig_SaveNeutral(bootNeutralState.neutralLeft, bootNeutralState.neutralRight) != 0U) {
         beepShort(7);
         beepShort(7);
