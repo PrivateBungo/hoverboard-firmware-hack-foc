@@ -8,6 +8,10 @@
 #include "stm32f1xx_hal.h"
 #include "util.h"
 
+#define BOOT_NEUTRAL_OBSERVE_MS  (2000U)
+#define BOOT_NEUTRAL_STABLE_BAND (30)
+#define BOOT_NEUTRAL_ABS(a)      (((a) < 0) ? (-(a)) : (a))
+
 #define PERSIST_CONFIG_FLASH_ADDR_DBG \
   (FLASH_BASE + (((uint32_t)(*(uint16_t *)FLASHSIZE_BASE)) * 1024U) - FLASH_PAGE_SIZE)
 #define PERSIST_CONFIG_MAGIC_DBG (0x4E454355UL)
@@ -180,8 +184,8 @@ void BootNeutralSupervisor_Process(BootNeutralSupervisorState *state,
     return;
   }
 
-  stableNow = (uint8_t)((ABS(cmdL_filt) <= BOOT_NEUTRAL_STABLE_BAND) &&
-                        (ABS(cmdR_filt) <= BOOT_NEUTRAL_STABLE_BAND));
+  stableNow = (uint8_t)((BOOT_NEUTRAL_ABS(cmdL_filt) <= BOOT_NEUTRAL_STABLE_BAND) &&
+                        (BOOT_NEUTRAL_ABS(cmdR_filt) <= BOOT_NEUTRAL_STABLE_BAND));
 
   if (state->state == BOOT_NEUTRAL_STATE_OBSERVE) {
     if (rcPresent == 0U) {
