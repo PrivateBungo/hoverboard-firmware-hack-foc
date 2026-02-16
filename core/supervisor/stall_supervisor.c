@@ -1,6 +1,6 @@
 #include "stall_supervisor.h"
 
-#include "util.h"
+#define STALL_ABS(a) (((a) < 0) ? (-(a)) : (a))
 
 #define STALL_STATE_NORMAL    (0U)
 #define STALL_STATE_RAMP      (1U)
@@ -16,8 +16,8 @@
 #define STALL_CURRENT_TRIGGER     (350)
 
 static uint8_t StallSupervisor_IsNeutralCommand(int16_t cmdLeft, int16_t cmdRight) {
-  return (uint8_t)((ABS(cmdLeft) <= STALL_NEUTRAL_DEADBAND) &&
-                   (ABS(cmdRight) <= STALL_NEUTRAL_DEADBAND));
+  return (uint8_t)((STALL_ABS(cmdLeft) <= STALL_NEUTRAL_DEADBAND) &&
+                   (STALL_ABS(cmdRight) <= STALL_NEUTRAL_DEADBAND));
 }
 
 static uint8_t StallSupervisor_StallCondition(int16_t reqLeft,
@@ -26,12 +26,12 @@ static uint8_t StallSupervisor_StallCondition(int16_t reqLeft,
                                               int16_t speedRight,
                                               int16_t curLeftDc,
                                               int16_t curRightDc) {
-  const uint8_t lowSpeed = (uint8_t)((ABS(speedLeft) <= STALL_SPEED_TRIGGER_RPM) ||
-                                     (ABS(speedRight) <= STALL_SPEED_TRIGGER_RPM));
-  const uint8_t highCurrent = (uint8_t)((ABS(curLeftDc) >= STALL_CURRENT_TRIGGER) ||
-                                        (ABS(curRightDc) >= STALL_CURRENT_TRIGGER));
-  const uint8_t highDemand = (uint8_t)((ABS(reqLeft) >= STALL_CMD_TRIGGER) ||
-                                       (ABS(reqRight) >= STALL_CMD_TRIGGER));
+  const uint8_t lowSpeed = (uint8_t)((STALL_ABS(speedLeft) <= STALL_SPEED_TRIGGER_RPM) ||
+                                     (STALL_ABS(speedRight) <= STALL_SPEED_TRIGGER_RPM));
+  const uint8_t highCurrent = (uint8_t)((STALL_ABS(curLeftDc) >= STALL_CURRENT_TRIGGER) ||
+                                        (STALL_ABS(curRightDc) >= STALL_CURRENT_TRIGGER));
+  const uint8_t highDemand = (uint8_t)((STALL_ABS(reqLeft) >= STALL_CMD_TRIGGER) ||
+                                       (STALL_ABS(reqRight) >= STALL_CMD_TRIGGER));
 
   return (uint8_t)(lowSpeed && (highCurrent || highDemand));
 }
