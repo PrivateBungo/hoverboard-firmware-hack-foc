@@ -31,6 +31,8 @@
 #include "rtwtypes.h"
 #include "comms.h"
 #include "drive_control.h"
+#include "input_supervisor.h"
+#include "mode_supervisor.h"
 
 #if defined(DEBUG_I2C_LCD) || defined(SUPPORT_LCD)
 #include "hd44780.h"
@@ -157,6 +159,8 @@ static int16_t    speed;                // local variable for speed. -1000 to 10
   static DriveControlState driveControlState;
   static DriveControlStallDecayState stallDecayStateLeft;
   static DriveControlStallDecayState stallDecayStateRight;
+  static InputSupervisorState inputSupervisorState;
+  static ModeSupervisorState modeSupervisorState;
 #endif
 
 static uint32_t    buzzerTimer_prev = 0;
@@ -222,6 +226,8 @@ int main(void) {
     DriveControl_Init(&driveControlState);
     DriveControl_ResetStallDecay(&stallDecayStateLeft);
     DriveControl_ResetStallDecay(&stallDecayStateRight);
+    InputSupervisor_Init(&inputSupervisorState);
+    ModeSupervisor_Init(&modeSupervisorState, ctrlModReq);
   #endif
   
   int32_t board_temp_adcFixdt = adc_buffer.temp << 16;  // Fixed-point filter output initialized with current ADC converted to fixed-point
@@ -340,6 +346,9 @@ int main(void) {
     #endif
 
     #ifndef VARIANT_TRANSPOTTER
+      InputSupervisor_Update(&inputSupervisorState, timeoutFlgADC, timeoutFlgSerial, timeoutFlgGen);
+      ModeSupervisor_Select(&modeSupervisorState, ctrlModReq);
+
       // ####### MOTOR ENABLING: Only if the initial input is very small (for SAFETY) #######
       if (enable == 0 && !g_errCodeLeftEffective && !g_errCodeRightEffective && 
           ABS(input1[inIdx].cmd) < 50 && ABS(input2[inIdx].cmd) < 50){
@@ -432,9 +441,12 @@ int main(void) {
         int16_t pwmlAfterDecay;
         int16_t pwmrAfterDecay;
 
-        uint8_t stallDecayModeActive =
-          ((STALL_DECAY_IN_TRQ_MODE != 0U) && (ctrlModReq == TRQ_MODE)) ||
-          ((STALL_DECAY_IN_VLT_MODE != 0U) && (ctrlModReq == VLT_MODE));
+        uint8_t stallDecayModeActive = ModeSupervisor_IsStallDecayActive(
+          &modeSupervisorState,
+          STALL_DECAY_IN_TRQ_MODE,
+          TRQ_MODE,
+          STALL_DECAY_IN_VLT_MODE,
+          VLT_MODE);
 
         pwmlAfterDecay = DriveControl_ApplyStallDecay((int16_t)pwml, rtY_Left.n_mot, stallDecayModeActive, &stallDecayStateLeft);
         pwmrAfterDecay = DriveControl_ApplyStallDecay((int16_t)pwmr, rtY_Right.n_mot, stallDecayModeActive, &stallDecayStateRight);

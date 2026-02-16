@@ -260,9 +260,9 @@ Validation:
 This section must be updated in each iteration to maintain continuity.
 
 ### Global status
-- Overall cleanup program: **Iteration 1 closed and validated; migration in progress**.
-- Current iteration: **1 (structure prep, no behavior change) — closed**.
-- Next planned iteration: **2 (extract supervisors from `main.c`) — pending merge/start**.
+- Overall cleanup program: **Iterations 1-2 closed and validated; migration in progress**.
+- Current iteration: **2 (extract supervisors from `main.c`) — closed**.
+- Next planned iteration: **3 (extract IO/telemetry surfaces) — pending merge/start**.
 
 ### Completed so far
 - Added this architecture cleanup plan.
@@ -273,13 +273,29 @@ This section must be updated in each iteration to maintain continuity.
 - Added initial no-op module skeletons for app loop, supervisor, io, diagnostics, and platform init boundaries.
 - Added docs and config placeholder READMEs for the target structure while keeping existing runtime paths unchanged.
 - Ran build validation after structural prep.
+- Extracted supervisor boundaries from `main.c` for timeout/failsafe observation and control-mode arbitration (iteration 2).
 
 ### Not started yet
-- No source-code extraction from `Src/main.c` has been executed yet.
 - No BLDC generated-file relocation has been executed yet.
 - No active macro/config split from `Inc/config.h` has been executed yet.
 
 ### Iteration log
+
+- **Iteration 2 — 2026-02-16**
+  - Scope executed:
+    - Integrated supervisor modules into active build path (`Makefile`) and include path wiring.
+    - Extracted timeout/failsafe state observation from `Src/main.c` into `core/supervisor/input_supervisor.*` via `InputSupervisorState` and `InputSupervisor_Update(...)` calls.
+    - Extracted control-mode arbitration helper from `Src/main.c` into `core/supervisor/mode_supervisor.*` via `ModeSupervisorState`, `ModeSupervisor_Select(...)`, and `ModeSupervisor_IsStallDecayActive(...)`.
+    - Replaced inline stall-decay mode selection logic in `main.c` with `mode_supervisor` boundary call while preserving existing control-mode macros and behavior.
+  - Build/check commands and results:
+    - `make clean` → passed.
+    - `make -j4` → blocked in Codex environment (`arm-none-eabi-gcc` missing).
+  - Compatibility notes:
+    - Existing runtime globals and macro semantics (`ctrlModReq`, timeout flags, stall decay feature gates) remain unchanged.
+    - Extraction is behavior-preserving and limited to supervisor boundary introduction + wiring.
+  - Next step:
+    - Iteration 3: move UART reporting and input decode boundaries into `core/io/*` with protocol compatibility preserved.
+
 
 - **Iteration 1 — 2026-02-16**
   - Scope executed:
