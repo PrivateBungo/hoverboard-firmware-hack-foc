@@ -57,7 +57,8 @@ core/supervisor/wheel_command_supervisor.c \
 core/supervisor/boot_neutral_supervisor.c \
 core/io/uart_reporting.c \
 core/io/input_decode.c \
-core/control/foc_adapter.c
+core/control/foc_adapter.c \
+core/control/user_intent.c
 
 # ASM sources
 ASM_SOURCES =  \

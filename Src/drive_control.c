@@ -10,29 +10,7 @@
 */
 
 #include "drive_control.h"
-#include "drive_math.h"
 #include "config.h"
-
-void DriveControl_Init(DriveControlState *state) {
-  DriveControl_ResetFilters(state);
-}
-
-void DriveControl_ResetFilters(DriveControlState *state) {
-  state->steerRateFixdt = 0;
-  state->speedRateFixdt = 0;
-  state->steerFixdt = 0;
-  state->speedFixdt = 0;
-}
-
-void DriveControl_FilterInputs(DriveControlState *state, int16_t steerCmd, int16_t speedCmd, uint16_t rate, int16_t *steer, int16_t *speed) {
-  rateLimiter16(steerCmd, rate, &state->steerRateFixdt);
-  rateLimiter16(speedCmd, rate, &state->speedRateFixdt);
-  filtLowPass32(state->steerRateFixdt >> 4, FILTER, &state->steerFixdt);
-  filtLowPass32(state->speedRateFixdt >> 4, FILTER, &state->speedFixdt);
-
-  *steer = (int16_t)(state->steerFixdt >> 16);
-  *speed = (int16_t)(state->speedFixdt >> 16);
-}
 
 void DriveControl_MixCommands(int16_t speed, int16_t steer, int16_t *cmdL, int16_t *cmdR) {
 #if defined(TANK_STEERING) && !defined(VARIANT_HOVERCAR) && !defined(VARIANT_SKATEBOARD)
