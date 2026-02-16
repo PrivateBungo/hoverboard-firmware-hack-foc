@@ -260,20 +260,52 @@ Validation:
 This section must be updated in each iteration to maintain continuity.
 
 ### Global status
-- Overall cleanup program: **Planning completed; implementation not started yet**.
-- Current iteration: **0 (architecture planning/documentation)**.
-- Next planned iteration: **1 (structure prep, no behavior change)**.
+- Overall cleanup program: **Iteration 1 closed and validated; migration in progress**.
+- Current iteration: **1 (structure prep, no behavior change) — closed**.
+- Next planned iteration: **2 (extract supervisors from `main.c`) — pending merge/start**.
 
 ### Completed so far
 - Added this architecture cleanup plan.
 - Captured current-state mapping and key structural issues.
 - Defined target architecture and module boundaries.
 - Defined a 5-iteration execution workflow with validation gates.
+- Created initial target directory scaffolding (`app/`, `core/`, `platform/`, `generated/`, `config/`, `tools/`, `examples/`).
+- Added initial no-op module skeletons for app loop, supervisor, io, diagnostics, and platform init boundaries.
+- Added docs and config placeholder READMEs for the target structure while keeping existing runtime paths unchanged.
+- Ran build validation after structural prep.
 
 ### Not started yet
-- No source-code refactor has been executed yet.
-- No folder migration or module extraction has been committed yet.
-- No config split has been implemented yet.
+- No source-code extraction from `Src/main.c` has been executed yet.
+- No BLDC generated-file relocation has been executed yet.
+- No active macro/config split from `Inc/config.h` has been executed yet.
+
+### Iteration log
+
+- **Iteration 1 — 2026-02-16**
+  - Scope executed:
+    - Added target architecture scaffold directories and placeholder documentation buckets.
+    - Added initial module skeletons with minimal/no-op implementations:
+      - `app/app_loop.*`
+      - `core/supervisor/{input_supervisor,mode_supervisor}.*`
+      - `core/io/uart_reporting.*`
+      - `core/diagnostics/diag_snapshot.*`
+      - `platform/stm32/hal_init.*`
+      - `core/control/foc_adapter.h` compatibility-forwarding bridge.
+    - Kept firmware behavior unchanged by not wiring new modules into current build/runtime flow.
+  - Build/check commands and results:
+    - `make clean` → passed.
+    - `make -j4` → blocked in Codex environment (`arm-none-eabi-gcc` missing).
+  - Compatibility notes:
+    - Existing source layout under `Src/` + `Inc/` remains the active build path.
+    - New folders and files are additive and non-invasive for this iteration.
+  - Follow-up adjustments after review:
+    - Added safety-focused serial debug transition logs in `Src/main.c` for timeout assertions/clears (`timeoutFlgADC`, `timeoutFlgSerial`, `timeoutFlgGen`), control-mode changes (`ctrlModReq`), and motor enable/disable transitions.
+    - Goal: make safety-relevant runtime state changes explicit on debug serial during bench/road testing.
+  - Hardware validation feedback (user test):
+    - User reported that firmware behavior is preserved on-device and previously working behavior remains intact.
+    - Iteration 1 scope is accepted/closed; repository is ready to merge this step and proceed to Iteration 2 in a later change.
+  - Next step:
+    - Iteration 2: move timeout/failsafe and mode arbitration logic from `main.c` into `core/supervisor/*` with behavior-preserving integration.
 
 ### How to update this section after each iteration
 For each completed iteration, append:
