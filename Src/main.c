@@ -220,6 +220,9 @@ int main(void) {
     DriveControl_ResetStallDecay(&stallDecayStateRight);
     InputSupervisor_Init(&inputSupervisorState);
     ModeSupervisor_Init(&modeSupervisorState, ctrlModReq);
+  #endif
+
+  #if defined(FEEDBACK_SERIAL_USART2) || defined(FEEDBACK_SERIAL_USART3)
     UartReporting_Init(&uartReportingState);
   #endif
   
