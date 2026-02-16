@@ -190,6 +190,7 @@ typedef struct {
   int16_t maxRight;
   uint8_t rcObserved;
   uint8_t rcMissingAfterObserved;
+  uint8_t observeStarted;
   uint8_t applyReady;
 } BootNeutralCalibrationState;
 
@@ -240,7 +241,7 @@ static uint8_t Main_IsRcInputSignalPresent(void) {
 }
 
 static void Main_InitBootNeutralCalibration(void) {
-  bootNeutralState.observeStartTick = HAL_GetTick();
+  bootNeutralState.observeStartTick = 0U;
   bootNeutralState.sumLeft = 0;
   bootNeutralState.sumRight = 0;
   bootNeutralState.sampleCount = 0U;
@@ -252,6 +253,7 @@ static void Main_InitBootNeutralCalibration(void) {
   bootNeutralState.maxRight = INT16_MIN;
   bootNeutralState.rcObserved = 0U;
   bootNeutralState.rcMissingAfterObserved = 0U;
+  bootNeutralState.observeStarted = 0U;
   bootNeutralState.applyReady = 0U;
 }
 
@@ -260,6 +262,11 @@ static void Main_UpdateBootNeutralObservation(int16_t filteredLeft, int16_t filt
 
   if (bootNeutralState.applyReady != 0U) {
     return;
+  }
+
+  if (bootNeutralState.observeStarted == 0U) {
+    bootNeutralState.observeStartTick = HAL_GetTick();
+    bootNeutralState.observeStarted = 1U;
   }
 
   if ((HAL_GetTick() - bootNeutralState.observeStartTick) < BOOT_NEUTRAL_OBSERVE_MS) {
