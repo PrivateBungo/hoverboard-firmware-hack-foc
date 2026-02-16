@@ -10,6 +10,8 @@
 
 #define BOOT_NEUTRAL_OBSERVE_MS  (2000U)
 #define BOOT_NEUTRAL_STABLE_BAND (30)
+#define BOOT_NEUTRAL_MIN_OBSERVE_MS_FOR_EARLY_EXIT (300U)
+#define BOOT_NEUTRAL_ACTIVE_CMD_EXIT_BAND          (80)
 #define BOOT_NEUTRAL_ABS(a)      (((a) < 0) ? (-(a)) : (a))
 
 #define PERSIST_CONFIG_FLASH_ADDR_DBG \
@@ -188,6 +190,10 @@ void BootNeutralSupervisor_Process(BootNeutralSupervisorState *state,
                         (BOOT_NEUTRAL_ABS(cmdR_filt) <= BOOT_NEUTRAL_STABLE_BAND));
 
   if (state->state == BOOT_NEUTRAL_STATE_OBSERVE) {
+    uint32_t elapsedMs;
+
+    elapsedMs = nowMs - state->boot_t0;
+
     if (rcPresent == 0U) {
       state->rc_present_all_window = 0U;
     }
@@ -204,7 +210,14 @@ void BootNeutralSupervisor_Process(BootNeutralSupervisorState *state,
       }
     }
 
-    if ((nowMs - state->boot_t0) >= BOOT_NEUTRAL_OBSERVE_MS) {
+    if ((elapsedMs >= BOOT_NEUTRAL_MIN_OBSERVE_MS_FOR_EARLY_EXIT) &&
+        (rcPresent != 0U) &&
+        ((BOOT_NEUTRAL_ABS(cmdL_filt) >= BOOT_NEUTRAL_ACTIVE_CMD_EXIT_BAND) ||
+         (BOOT_NEUTRAL_ABS(cmdR_filt) >= BOOT_NEUTRAL_ACTIVE_CMD_EXIT_BAND))) {
+      state->state = BOOT_NEUTRAL_STATE_APPLY;
+    }
+
+    if (elapsedMs >= BOOT_NEUTRAL_OBSERVE_MS) {
       state->state = BOOT_NEUTRAL_STATE_APPLY;
     }
   }
