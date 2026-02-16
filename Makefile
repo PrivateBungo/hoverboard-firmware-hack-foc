@@ -48,7 +48,9 @@ Src/hd44780.c \
 Src/pcf8574.c \
 Src/stm32f1xx_it.c \
 Src/BLDC_controller_data.c \
-Src/BLDC_controller.c
+Src/BLDC_controller.c \
+core/supervisor/input_supervisor.c \
+core/supervisor/mode_supervisor.c
 
 # ASM sources
 ASM_SOURCES =  \
@@ -101,7 +103,8 @@ C_INCLUDES =  \
 -IDrivers/STM32F1xx_HAL_Driver/Inc \
 -IDrivers/STM32F1xx_HAL_Driver/Inc/Legacy \
 -IDrivers/CMSIS/Device/ST/STM32F1xx/Include \
--IDrivers/CMSIS/Include
+-IDrivers/CMSIS/Include \
+-Icore/supervisor
 
 
 # compile gcc flags
