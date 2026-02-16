@@ -77,9 +77,6 @@ static int32_t batVoltageFixdt  = (400 * BAT_CELLS * BAT_CALIB_ADC) / BAT_CALIB_
 // =================================
 // DMA interrupt frequency =~ 16 kHz
 // =================================
-#define STALL_ERR_BIT              (0x04U)
-#define STALL_RECOVERY_DELAY_MS    (10000U)
-#define STALL_NEUTRAL_PWM_DEADBAND (300)
 
 void DMA1_Channel1_IRQHandler(void) {
 
@@ -158,8 +155,6 @@ void DMA1_Channel1_IRQHandler(void) {
   int ul, vl, wl;
   int ur, vr, wr;
   static boolean_T OverrunFlag = false;
-  static uint32_t stallRecoverAtMs = 0;
-  static uint8_t stallRecoveryActive = 0;
 
   /* Check for overrun */
   if (OverrunFlag) {
@@ -167,24 +162,12 @@ void DMA1_Channel1_IRQHandler(void) {
   }
   OverrunFlag = true;
 
-  const uint32_t tickNowMs = HAL_GetTick();
-  const uint8_t leftErrRaw = FocAdapter_GetErrorCode(FOC_ADAPTER_MOTOR_LEFT);
-  const uint8_t rightErrRaw = FocAdapter_GetErrorCode(FOC_ADAPTER_MOTOR_RIGHT);
-  const uint8_t stallErrActive = ((leftErrRaw & STALL_ERR_BIT) != 0U) || ((rightErrRaw & STALL_ERR_BIT) != 0U);
+  /* Snapshot raw motor faults for supervisory policy in main loop. */
+  g_errCodeLeftEffective = FocAdapter_GetErrorCode(FOC_ADAPTER_MOTOR_LEFT);
+  g_errCodeRightEffective = FocAdapter_GetErrorCode(FOC_ADAPTER_MOTOR_RIGHT);
 
-  if (!stallRecoveryActive && stallErrActive) {
-    stallRecoveryActive = 1U;
-    stallRecoverAtMs = tickNowMs + STALL_RECOVERY_DELAY_MS;
-  }
-
-  const uint8_t stallGraceActive = stallRecoveryActive && (stallRecoverAtMs > tickNowMs);
-
-  /* During stall recovery we reject control input and keep motors disabled. */
-  if (stallRecoveryActive) {
-    enableFin = 0;
-  } else {
-    enableFin = enable && !leftErrRaw && !rightErrRaw;
-  }
+  /* ISR gating remains immediate and deterministic: enable command + non-stall hard faults. */
+  enableFin = enable && ((g_errCodeLeftEffective & (uint8_t)~0x04U) == 0U) && ((g_errCodeRightEffective & (uint8_t)~0x04U) == 0U);
  
   // ========================= LEFT MOTOR ============================ 
     // Get hall sensors values
@@ -216,27 +199,6 @@ void DMA1_Channel1_IRQHandler(void) {
     ul            = leftOutput->DC_phaA;
     vl            = leftOutput->DC_phaB;
     wl            = leftOutput->DC_phaC;
-
-    const uint8_t inputIsNeutral = (ABS(pwml) <= STALL_NEUTRAL_PWM_DEADBAND) && (ABS(pwmr) <= STALL_NEUTRAL_PWM_DEADBAND);
-    const uint8_t stallRecoveryReady = stallRecoveryActive && !stallGraceActive && inputIsNeutral;
-
-    if (stallRecoveryReady) {
-      FocAdapter_ClearErrorBits(STALL_ERR_BIT);
-    }
-
-    g_errCodeLeftEffective = FocAdapter_GetErrorCode(FOC_ADAPTER_MOTOR_LEFT);
-    g_errCodeRightEffective = FocAdapter_GetErrorCode(FOC_ADAPTER_MOTOR_RIGHT);
-
-    if (stallRecoveryReady) {
-      g_errCodeLeftEffective &= (uint8_t)~STALL_ERR_BIT;
-      g_errCodeRightEffective &= (uint8_t)~STALL_ERR_BIT;
-    }
-
-    /* Exit recovery only after raw stall bit is gone, preventing immediate retrigger loops. */
-    if (stallRecoveryActive && !stallGraceActive && !stallErrActive) {
-      stallRecoveryActive = 0U;
-      stallRecoverAtMs = 0U;
-    }
 
     /* Apply commands */
     LEFT_TIM->LEFT_TIM_U    = (uint16_t)CLAMP(ul + pwm_res / 2, pwm_margin, pwm_res-pwm_margin);
