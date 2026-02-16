@@ -9,6 +9,14 @@ typedef enum {
   BOOT_NEUTRAL_STATE_RUN
 } BootNeutralSupervisorPhase;
 
+typedef enum {
+  BOOT_NEUTRAL_DECISION_NONE = 0,
+  BOOT_NEUTRAL_DECISION_APPLIED,
+  BOOT_NEUTRAL_DECISION_FAIL_RC_WINDOW,
+  BOOT_NEUTRAL_DECISION_FAIL_ABORT_MAG,
+  BOOT_NEUTRAL_DECISION_FAIL_NO_SAMPLES
+} BootNeutralSupervisorDecision;
+
 typedef struct {
   uint32_t startMs;
   BootNeutralSupervisorPhase phase;
@@ -22,14 +30,17 @@ typedef struct {
   int16_t observeMaxAbsL;
   int16_t observeMaxAbsR;
   uint8_t learningApplied;
+  BootNeutralSupervisorDecision decision;
 } BootNeutralSupervisorState;
 
 void BootNeutralSupervisor_Init(BootNeutralSupervisorState *state, uint32_t nowMs);
 void BootNeutralSupervisor_Update(BootNeutralSupervisorState *state,
                                   uint32_t nowMs,
                                   uint8_t rcPresent,
-                                  int16_t cmdL_filt,
-                                  int16_t cmdR_filt,
+                                  int16_t cmdL_observe,
+                                  int16_t cmdR_observe,
+                                  int16_t cmdL_runIn,
+                                  int16_t cmdR_runIn,
                                   int16_t *cmdL_adj,
                                   int16_t *cmdR_adj,
                                   uint8_t *forceZeroPwm);
@@ -46,5 +57,6 @@ int32_t BootNeutralSupervisor_GetSumR(const BootNeutralSupervisorState *state);
 int16_t BootNeutralSupervisor_GetObserveMaxAbsL(const BootNeutralSupervisorState *state);
 int16_t BootNeutralSupervisor_GetObserveMaxAbsR(const BootNeutralSupervisorState *state);
 uint8_t BootNeutralSupervisor_WasLearningApplied(const BootNeutralSupervisorState *state);
+BootNeutralSupervisorDecision BootNeutralSupervisor_GetDecision(const BootNeutralSupervisorState *state);
 
 #endif /* BOOT_NEUTRAL_SUPERVISOR_H */

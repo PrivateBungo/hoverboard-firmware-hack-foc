@@ -21,13 +21,16 @@ void BootNeutralSupervisor_Init(BootNeutralSupervisorState *state, uint32_t nowM
   state->observeMaxAbsL = 0;
   state->observeMaxAbsR = 0;
   state->learningApplied = 0U;
+  state->decision = BOOT_NEUTRAL_DECISION_NONE;
 }
 
 void BootNeutralSupervisor_Update(BootNeutralSupervisorState *state,
                                   uint32_t nowMs,
                                   uint8_t rcPresent,
-                                  int16_t cmdL_filt,
-                                  int16_t cmdR_filt,
+                                  int16_t cmdL_observe,
+                                  int16_t cmdR_observe,
+                                  int16_t cmdL_runIn,
+                                  int16_t cmdR_runIn,
                                   int16_t *cmdL_adj,
                                   int16_t *cmdR_adj,
                                   uint8_t *forceZeroPwm) {
@@ -39,16 +42,16 @@ void BootNeutralSupervisor_Update(BootNeutralSupervisorState *state,
 
   elapsedMs = nowMs - state->startMs;
 
-  *cmdL_adj = cmdL_filt;
-  *cmdR_adj = cmdR_filt;
+  *cmdL_adj = cmdL_runIn;
+  *cmdR_adj = cmdR_runIn;
   *forceZeroPwm = 0U;
 
   if (state->phase == BOOT_NEUTRAL_STATE_OBSERVE) {
     state->rcPresentAllWindow = (uint8_t)(state->rcPresentAllWindow && (rcPresent != 0U));
 
     {
-      int16_t absL = BOOT_NEUTRAL_ABS(cmdL_filt);
-      int16_t absR = BOOT_NEUTRAL_ABS(cmdR_filt);
+      int16_t absL = BOOT_NEUTRAL_ABS(cmdL_observe);
+      int16_t absR = BOOT_NEUTRAL_ABS(cmdR_observe);
 
       if (absL > state->observeMaxAbsL) {
         state->observeMaxAbsL = absL;
@@ -63,8 +66,8 @@ void BootNeutralSupervisor_Update(BootNeutralSupervisorState *state,
     }
 
     if (rcPresent != 0U) {
-      state->sumL += cmdL_filt;
-      state->sumR += cmdR_filt;
+      state->sumL += cmdL_observe;
+      state->sumR += cmdR_observe;
       state->sampleCount++;
     }
 
@@ -78,18 +81,27 @@ void BootNeutralSupervisor_Update(BootNeutralSupervisorState *state,
       state->neutralL = (int16_t)(state->sumL / (int32_t)state->sampleCount);
       state->neutralR = (int16_t)(state->sumR / (int32_t)state->sampleCount);
       state->learningApplied = 1U;
+      state->decision = BOOT_NEUTRAL_DECISION_APPLIED;
     } else {
       state->neutralL = 0;
       state->neutralR = 0;
       state->learningApplied = 0U;
+
+      if (state->rcPresentAllWindow == 0U) {
+        state->decision = BOOT_NEUTRAL_DECISION_FAIL_RC_WINDOW;
+      } else if (state->abortAllWindow != 0U) {
+        state->decision = BOOT_NEUTRAL_DECISION_FAIL_ABORT_MAG;
+      } else {
+        state->decision = BOOT_NEUTRAL_DECISION_FAIL_NO_SAMPLES;
+      }
     }
 
     state->phase = BOOT_NEUTRAL_STATE_RUN;
   }
 
   if (state->phase == BOOT_NEUTRAL_STATE_RUN) {
-    *cmdL_adj = (int16_t)(cmdL_filt - state->neutralL);
-    *cmdR_adj = (int16_t)(cmdR_filt - state->neutralR);
+    *cmdL_adj = (int16_t)(cmdL_runIn - state->neutralL);
+    *cmdR_adj = (int16_t)(cmdR_runIn - state->neutralR);
   } else {
     *forceZeroPwm = 1U;
   }
@@ -189,4 +201,12 @@ uint8_t BootNeutralSupervisor_WasLearningApplied(const BootNeutralSupervisorStat
   }
 
   return state->learningApplied;
+}
+
+BootNeutralSupervisorDecision BootNeutralSupervisor_GetDecision(const BootNeutralSupervisorState *state) {
+  if (state == 0) {
+    return BOOT_NEUTRAL_DECISION_NONE;
+  }
+
+  return state->decision;
 }
