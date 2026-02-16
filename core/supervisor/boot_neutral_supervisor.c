@@ -18,6 +18,9 @@ void BootNeutralSupervisor_Init(BootNeutralSupervisorState *state, uint32_t nowM
   state->sampleCount = 0U;
   state->neutralL = 0;
   state->neutralR = 0;
+  state->observeMaxAbsL = 0;
+  state->observeMaxAbsR = 0;
+  state->learningApplied = 0U;
 }
 
 void BootNeutralSupervisor_Update(BootNeutralSupervisorState *state,
@@ -43,9 +46,20 @@ void BootNeutralSupervisor_Update(BootNeutralSupervisorState *state,
   if (state->phase == BOOT_NEUTRAL_STATE_OBSERVE) {
     state->rcPresentAllWindow = (uint8_t)(state->rcPresentAllWindow && (rcPresent != 0U));
 
-    if ((BOOT_NEUTRAL_ABS(cmdL_filt) >= BOOT_NEUTRAL_ABORT_MAG) ||
-        (BOOT_NEUTRAL_ABS(cmdR_filt) >= BOOT_NEUTRAL_ABORT_MAG)) {
-      state->abortAllWindow = 1U;
+    {
+      int16_t absL = BOOT_NEUTRAL_ABS(cmdL_filt);
+      int16_t absR = BOOT_NEUTRAL_ABS(cmdR_filt);
+
+      if (absL > state->observeMaxAbsL) {
+        state->observeMaxAbsL = absL;
+      }
+      if (absR > state->observeMaxAbsR) {
+        state->observeMaxAbsR = absR;
+      }
+
+      if ((absL >= BOOT_NEUTRAL_ABORT_MAG) || (absR >= BOOT_NEUTRAL_ABORT_MAG)) {
+        state->abortAllWindow = 1U;
+      }
     }
 
     if (rcPresent != 0U) {
@@ -63,9 +77,11 @@ void BootNeutralSupervisor_Update(BootNeutralSupervisorState *state,
     if ((state->rcPresentAllWindow != 0U) && (state->abortAllWindow == 0U) && (state->sampleCount > 0U)) {
       state->neutralL = (int16_t)(state->sumL / (int32_t)state->sampleCount);
       state->neutralR = (int16_t)(state->sumR / (int32_t)state->sampleCount);
+      state->learningApplied = 1U;
     } else {
       state->neutralL = 0;
       state->neutralR = 0;
+      state->learningApplied = 0U;
     }
 
     state->phase = BOOT_NEUTRAL_STATE_RUN;
@@ -117,4 +133,60 @@ int16_t BootNeutralSupervisor_GetNeutralR(const BootNeutralSupervisorState *stat
   }
 
   return state->neutralR;
+}
+
+uint8_t BootNeutralSupervisor_GetRcPresentAllWindow(const BootNeutralSupervisorState *state) {
+  if (state == 0) {
+    return 0U;
+  }
+
+  return state->rcPresentAllWindow;
+}
+
+uint32_t BootNeutralSupervisor_GetSampleCount(const BootNeutralSupervisorState *state) {
+  if (state == 0) {
+    return 0U;
+  }
+
+  return state->sampleCount;
+}
+
+int32_t BootNeutralSupervisor_GetSumL(const BootNeutralSupervisorState *state) {
+  if (state == 0) {
+    return 0;
+  }
+
+  return state->sumL;
+}
+
+int32_t BootNeutralSupervisor_GetSumR(const BootNeutralSupervisorState *state) {
+  if (state == 0) {
+    return 0;
+  }
+
+  return state->sumR;
+}
+
+int16_t BootNeutralSupervisor_GetObserveMaxAbsL(const BootNeutralSupervisorState *state) {
+  if (state == 0) {
+    return 0;
+  }
+
+  return state->observeMaxAbsL;
+}
+
+int16_t BootNeutralSupervisor_GetObserveMaxAbsR(const BootNeutralSupervisorState *state) {
+  if (state == 0) {
+    return 0;
+  }
+
+  return state->observeMaxAbsR;
+}
+
+uint8_t BootNeutralSupervisor_WasLearningApplied(const BootNeutralSupervisorState *state) {
+  if (state == 0) {
+    return 0U;
+  }
+
+  return state->learningApplied;
 }

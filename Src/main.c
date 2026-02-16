@@ -237,7 +237,10 @@ int main(void) {
     int16_t cmdL_adj = 0;
     int16_t cmdR_adj = 0;
     uint8_t bootNeutralForceZeroPwm = 0U;
-    uint32_t bootNeutralDebugLastPrintMs = 0U;
+    #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
+      uint32_t bootNeutralDebugLastPrintMs = 0U;
+      BootNeutralSupervisorPhase bootNeutralPrevPhase = BOOT_NEUTRAL_STATE_OBSERVE;
+    #endif
 
     BootNeutralSupervisor_Init(&bootNeutralSupervisorState, HAL_GetTick());
   #endif
@@ -451,6 +454,7 @@ int main(void) {
       DriveControl_MixCommands(speed, steer, &cmdL, &cmdR);
       WheelCommandSupervisor_Update(&wheelCommandSupervisorState, cmdL, cmdR, &cmdL, &cmdR);
 
+      /* Learn from post-shaping wheel commands only (after LPF + hysteresis). */
       cmdL_filt = cmdL;
       cmdR_filt = cmdR;
 
@@ -551,6 +555,7 @@ int main(void) {
         }
       }
 
+      /* Gate only final PWM during OBSERVE; learning still sees ungated cmd*_filt. */
       if (bootNeutralForceZeroPwm != 0U) {
         pwml = 0;
         pwmr = 0;
@@ -561,14 +566,38 @@ int main(void) {
         uint32_t nowMs = HAL_GetTick();
         uint32_t bootNeutralElapsedMs = BootNeutralSupervisor_ElapsedMs(&bootNeutralSupervisorState, nowMs);
 
+        BootNeutralSupervisorPhase bootNeutralPhase = BootNeutralSupervisor_GetPhase(&bootNeutralSupervisorState);
+
+        if (bootNeutralPhase != bootNeutralPrevPhase) {
+          printf("BootNeutral transition %u->%u learn:%u rcAll:%u abort:%u n:%lu maxAbs:(%i,%i) sum:(%ld,%ld) neutral:(%i,%i)\r\n",
+            (unsigned)bootNeutralPrevPhase,
+            (unsigned)bootNeutralPhase,
+            (unsigned)BootNeutralSupervisor_WasLearningApplied(&bootNeutralSupervisorState),
+            (unsigned)BootNeutralSupervisor_GetRcPresentAllWindow(&bootNeutralSupervisorState),
+            (unsigned)BootNeutralSupervisor_GetAbortFlag(&bootNeutralSupervisorState),
+            (unsigned long)BootNeutralSupervisor_GetSampleCount(&bootNeutralSupervisorState),
+            BootNeutralSupervisor_GetObserveMaxAbsL(&bootNeutralSupervisorState),
+            BootNeutralSupervisor_GetObserveMaxAbsR(&bootNeutralSupervisorState),
+            (long)BootNeutralSupervisor_GetSumL(&bootNeutralSupervisorState),
+            (long)BootNeutralSupervisor_GetSumR(&bootNeutralSupervisorState),
+            BootNeutralSupervisor_GetNeutralL(&bootNeutralSupervisorState),
+            BootNeutralSupervisor_GetNeutralR(&bootNeutralSupervisorState));
+          bootNeutralPrevPhase = bootNeutralPhase;
+        }
+
         if ((bootNeutralElapsedMs <= 3000U) && ((nowMs - bootNeutralDebugLastPrintMs) >= 200U)) {
           uint8_t rcPresent = (timeoutFlgGen == 0U);
 
-          printf("BootNeutral st:%u el:%lu rc:%u abort:%u cmdF:(%i,%i) neutral:(%i,%i) cmdA:(%i,%i) pwm:(%i,%i)\r\n",
-            (unsigned)BootNeutralSupervisor_GetPhase(&bootNeutralSupervisorState),
+          printf("BootNeutral st:%u el:%lu rc:%u rcAll:%u abort:%u force0:%u n:%lu maxAbs:(%i,%i) cmdF:(%i,%i) neutral:(%i,%i) cmdA:(%i,%i) pwm:(%i,%i)\r\n",
+            (unsigned)bootNeutralPhase,
             (unsigned long)bootNeutralElapsedMs,
             (unsigned)rcPresent,
+            (unsigned)BootNeutralSupervisor_GetRcPresentAllWindow(&bootNeutralSupervisorState),
             (unsigned)BootNeutralSupervisor_GetAbortFlag(&bootNeutralSupervisorState),
+            (unsigned)bootNeutralForceZeroPwm,
+            (unsigned long)BootNeutralSupervisor_GetSampleCount(&bootNeutralSupervisorState),
+            BootNeutralSupervisor_GetObserveMaxAbsL(&bootNeutralSupervisorState),
+            BootNeutralSupervisor_GetObserveMaxAbsR(&bootNeutralSupervisorState),
             cmdL_filt,
             cmdR_filt,
             BootNeutralSupervisor_GetNeutralL(&bootNeutralSupervisorState),

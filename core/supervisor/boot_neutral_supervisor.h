@@ -19,6 +19,9 @@ typedef struct {
   uint32_t sampleCount;
   int16_t neutralL;
   int16_t neutralR;
+  int16_t observeMaxAbsL;
+  int16_t observeMaxAbsR;
+  uint8_t learningApplied;
 } BootNeutralSupervisorState;
 
 void BootNeutralSupervisor_Init(BootNeutralSupervisorState *state, uint32_t nowMs);
@@ -36,5 +39,12 @@ BootNeutralSupervisorPhase BootNeutralSupervisor_GetPhase(const BootNeutralSuper
 uint8_t BootNeutralSupervisor_GetAbortFlag(const BootNeutralSupervisorState *state);
 int16_t BootNeutralSupervisor_GetNeutralL(const BootNeutralSupervisorState *state);
 int16_t BootNeutralSupervisor_GetNeutralR(const BootNeutralSupervisorState *state);
+uint8_t BootNeutralSupervisor_GetRcPresentAllWindow(const BootNeutralSupervisorState *state);
+uint32_t BootNeutralSupervisor_GetSampleCount(const BootNeutralSupervisorState *state);
+int32_t BootNeutralSupervisor_GetSumL(const BootNeutralSupervisorState *state);
+int32_t BootNeutralSupervisor_GetSumR(const BootNeutralSupervisorState *state);
+int16_t BootNeutralSupervisor_GetObserveMaxAbsL(const BootNeutralSupervisorState *state);
+int16_t BootNeutralSupervisor_GetObserveMaxAbsR(const BootNeutralSupervisorState *state);
+uint8_t BootNeutralSupervisor_WasLearningApplied(const BootNeutralSupervisorState *state);
 
 #endif /* BOOT_NEUTRAL_SUPERVISOR_H */
