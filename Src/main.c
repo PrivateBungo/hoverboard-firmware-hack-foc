@@ -33,6 +33,7 @@
 #include "drive_control.h"
 #include "input_supervisor.h"
 #include "mode_supervisor.h"
+#include "stall_supervisor.h"
 #include "uart_reporting.h"
 #include "input_decode.h"
 #include "foc_adapter.h"
@@ -86,6 +87,8 @@ extern uint8_t enable;                  // global variable for motor enable
 extern uint8_t ctrlModReq;              // global variable for final control mode request
 
 extern int16_t batVoltage;              // global variable for battery voltage
+extern int16_t curL_DC;                  // ISR-sampled left DC link current ADC units
+extern int16_t curR_DC;                  // ISR-sampled right DC link current ADC units
 
 #if defined(SIDEBOARD_SERIAL_USART2)
 extern SerialSideboard Sideboard_L;
@@ -150,6 +153,7 @@ static int16_t    speed;                // local variable for speed. -1000 to 10
   static DriveControlStallDecayState stallDecayStateRight;
   static InputSupervisorState inputSupervisorState;
   static ModeSupervisorState modeSupervisorState;
+  static StallSupervisorState stallSupervisorState;
 #endif
 
 static uint32_t    buzzerTimer_prev = 0;
@@ -164,6 +168,8 @@ static MultipleTap MultipleTapBrake;    // define multiple tap functionality for
 #endif
 
 static uint16_t rate = RATE; // Adjustable rate to support multiple drive modes on startup
+
+#define STALL_ERR_BIT (0x04U)
 
 #ifdef MULTI_MODE_DRIVE
   static uint8_t drive_mode;
@@ -217,6 +223,7 @@ int main(void) {
     DriveControl_ResetStallDecay(&stallDecayStateRight);
     InputSupervisor_Init(&inputSupervisorState);
     ModeSupervisor_Init(&modeSupervisorState, ctrlModReq);
+    StallSupervisor_Init(&stallSupervisorState);
   #endif
 
   #if defined(FEEDBACK_SERIAL_USART2) || defined(FEEDBACK_SERIAL_USART3)
@@ -343,7 +350,7 @@ int main(void) {
       ModeSupervisor_Select(&modeSupervisorState, ctrlModReq);
 
       // ####### MOTOR ENABLING: Only if the initial input is very small (for SAFETY) #######
-      if (enable == 0 && !g_errCodeLeftEffective && !g_errCodeRightEffective && 
+      if (enable == 0 && ((g_errCodeLeftEffective & (uint8_t)~STALL_ERR_BIT) == 0U) && ((g_errCodeRightEffective & (uint8_t)~STALL_ERR_BIT) == 0U) &&
           ABS(input1[inIdx].cmd) < 50 && ABS(input2[inIdx].cmd) < 50){
         beepShort(6);                     // make 2 beeps indicating the motor enable
         beepShort(4); HAL_Delay(100);
@@ -484,6 +491,31 @@ int main(void) {
               rightLimited);
           }
         #endif
+      }
+
+      {
+        int16_t policyOutLeft;
+        int16_t policyOutRight;
+        uint8_t stallDriveEnable;
+
+        StallSupervisor_Update(&stallSupervisorState,
+                               HAL_GetTick(),
+                               (int16_t)pwml,
+                               (int16_t)pwmr,
+                               (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_LEFT),
+                               (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_RIGHT),
+                               curL_DC,
+                               curR_DC,
+                               &policyOutLeft,
+                               &policyOutRight,
+                               &stallDriveEnable);
+
+        pwml = policyOutLeft;
+        pwmr = policyOutRight;
+
+        if (stallDriveEnable == 0U) {
+          enable = 0U;
+        }
       }
     #endif
 
@@ -632,7 +664,7 @@ int main(void) {
           process_debug();
         #else
           InputDecodePair inputDecodePair = InputDecode_BuildPair(input1[inIdx].raw, input2[inIdx].raw, cmdL, cmdR);
-          printf("in1:%i in2:%i cmdL:%i cmdR:%i ErrL:%u ErrR:%u BatADC:%i BatV:%i TempADC:%i Temp:%i StallL_t:%u StallR_t:%u CtrlMode:%u\r\n",
+          printf("in1:%i in2:%i cmdL:%i cmdR:%i ErrL:%u ErrR:%u BatADC:%i BatV:%i TempADC:%i Temp:%i StallL_t:%u StallR_t:%u StallSup:%u CtrlMode:%u\r\n",
             inputDecodePair.raw1,     // 1: INPUT1
             inputDecodePair.raw2,     // 2: INPUT2
             inputDecodePair.cmd1,     // 3: output command: [-1000, 1000]
@@ -645,6 +677,7 @@ int main(void) {
             board_temp_deg_c,         // 10: for verifying board temperature calibration
             stallDecayStateLeft.stallTimerMs,
             stallDecayStateRight.stallTimerMs,
+            (unsigned)StallSupervisor_IsActive(&stallSupervisorState),
             ctrlModReq);        // 10: for verifying board temperature calibration
         #endif
       }
@@ -700,7 +733,7 @@ int main(void) {
         printf("Powering off, battery voltage is too low\r\n");
       #endif
       poweroff();
-    } else if (g_errCodeLeftEffective || g_errCodeRightEffective) {                                           // 1 beep (low pitch): Motor error, disable motors
+    } else if ((g_errCodeLeftEffective & (uint8_t)~STALL_ERR_BIT) || (g_errCodeRightEffective & (uint8_t)~STALL_ERR_BIT)) {                                           // 1 beep (low pitch): Motor error, disable motors
       enable = 0;
       beepCount(1, 24, 1);
     } else if (timeoutFlgADC) {                                                                       // 2 beeps (low pitch): ADC timeout
