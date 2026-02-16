@@ -33,6 +33,8 @@
 #include "drive_control.h"
 #include "input_supervisor.h"
 #include "mode_supervisor.h"
+#include "uart_reporting.h"
+#include "input_decode.h"
 
 #if defined(DEBUG_I2C_LCD) || defined(SUPPORT_LCD)
 #include "hd44780.h"
@@ -121,18 +123,8 @@ int16_t cmdR;                    // global variable for Right Command
 // Local variables
 //------------------------------------------------------------------------
 #if defined(FEEDBACK_SERIAL_USART2) || defined(FEEDBACK_SERIAL_USART3)
-typedef struct{
-  uint16_t  start;
-  int16_t   cmd1;
-  int16_t   cmd2;
-  int16_t   speedR_meas;
-  int16_t   speedL_meas;
-  int16_t   batVoltage;
-  int16_t   boardTemp;
-  uint16_t  cmdLed;
-  uint16_t  checksum;
-} SerialFeedback;
-static SerialFeedback Feedback;
+static UartReportingFrame feedbackFrame;
+static UartReportingState uartReportingState;
 #endif
 #if defined(FEEDBACK_SERIAL_USART2)
 static uint8_t sideboard_leds_L;
@@ -228,6 +220,7 @@ int main(void) {
     DriveControl_ResetStallDecay(&stallDecayStateRight);
     InputSupervisor_Init(&inputSupervisorState);
     ModeSupervisor_Init(&modeSupervisorState, ctrlModReq);
+    UartReporting_Init(&uartReportingState);
   #endif
   
   int32_t board_temp_adcFixdt = adc_buffer.temp << 16;  // Fixed-point filter output initialized with current ADC converted to fixed-point
@@ -638,11 +631,12 @@ int main(void) {
         #if defined(DEBUG_SERIAL_PROTOCOL)
           process_debug();
         #else
+          InputDecodePair inputDecodePair = InputDecode_BuildPair(input1[inIdx].raw, input2[inIdx].raw, cmdL, cmdR);
           printf("in1:%i in2:%i cmdL:%i cmdR:%i ErrL:%u ErrR:%u BatADC:%i BatV:%i TempADC:%i Temp:%i StallL_t:%u StallR_t:%u CtrlMode:%u\r\n",
-            input1[inIdx].raw,        // 1: INPUT1
-            input2[inIdx].raw,        // 2: INPUT2
-            cmdL,                     // 3: output command: [-1000, 1000]
-            cmdR,                     // 4: output command: [-1000, 1000]
+            inputDecodePair.raw1,     // 1: INPUT1
+            inputDecodePair.raw2,     // 2: INPUT2
+            inputDecodePair.cmd1,     // 3: output command: [-1000, 1000]
+            inputDecodePair.cmd2,     // 4: output command: [-1000, 1000]
             g_errCodeLeftEffective,       // 5: left motor error code flags
             g_errCodeRightEffective,      // 6: right motor error code flags
             adc_buffer.batt1,         // 7: for battery voltage calibration
@@ -659,30 +653,34 @@ int main(void) {
     // ####### FEEDBACK SERIAL OUT #######
     #if defined(FEEDBACK_SERIAL_USART2) || defined(FEEDBACK_SERIAL_USART3)
       if (main_loop_counter % 2 == 0) {    // Send data periodically every 10 ms
-        Feedback.start	        = (uint16_t)SERIAL_START_FRAME;
-        Feedback.cmd1           = (int16_t)input1[inIdx].cmd;
-        Feedback.cmd2           = (int16_t)input2[inIdx].cmd;
-        Feedback.speedR_meas	  = (int16_t)rtY_Right.n_mot;
-        Feedback.speedL_meas	  = (int16_t)rtY_Left.n_mot;
-        Feedback.batVoltage	    = (int16_t)batVoltageCalib;
-        Feedback.boardTemp	    = (int16_t)board_temp_deg_c;
-
         #if defined(FEEDBACK_SERIAL_USART2)
           if(__HAL_DMA_GET_COUNTER(huart2.hdmatx) == 0) {
-            Feedback.cmdLed     = (uint16_t)sideboard_leds_L;
-            Feedback.checksum   = (uint16_t)(Feedback.start ^ Feedback.cmd1 ^ Feedback.cmd2 ^ Feedback.speedR_meas ^ Feedback.speedL_meas 
-                                           ^ Feedback.batVoltage ^ Feedback.boardTemp ^ Feedback.cmdLed);
-
-            HAL_UART_Transmit_DMA(&huart2, (uint8_t *)&Feedback, sizeof(Feedback));
+            UartReporting_PrepareFrame(&feedbackFrame,
+                                       (uint16_t)SERIAL_START_FRAME,
+                                       (int16_t)input1[inIdx].cmd,
+                                       (int16_t)input2[inIdx].cmd,
+                                       (int16_t)rtY_Right.n_mot,
+                                       (int16_t)rtY_Left.n_mot,
+                                       (int16_t)batVoltageCalib,
+                                       (int16_t)board_temp_deg_c,
+                                       (uint16_t)sideboard_leds_L);
+            UartReporting_OnFrame(&uartReportingState);
+            HAL_UART_Transmit_DMA(&huart2, (uint8_t *)&feedbackFrame, sizeof(feedbackFrame));
           }
         #endif
         #if defined(FEEDBACK_SERIAL_USART3)
           if(__HAL_DMA_GET_COUNTER(huart3.hdmatx) == 0) {
-            Feedback.cmdLed     = (uint16_t)sideboard_leds_R;
-            Feedback.checksum   = (uint16_t)(Feedback.start ^ Feedback.cmd1 ^ Feedback.cmd2 ^ Feedback.speedR_meas ^ Feedback.speedL_meas 
-                                           ^ Feedback.batVoltage ^ Feedback.boardTemp ^ Feedback.cmdLed);
-
-            HAL_UART_Transmit_DMA(&huart3, (uint8_t *)&Feedback, sizeof(Feedback));
+            UartReporting_PrepareFrame(&feedbackFrame,
+                                       (uint16_t)SERIAL_START_FRAME,
+                                       (int16_t)input1[inIdx].cmd,
+                                       (int16_t)input2[inIdx].cmd,
+                                       (int16_t)rtY_Right.n_mot,
+                                       (int16_t)rtY_Left.n_mot,
+                                       (int16_t)batVoltageCalib,
+                                       (int16_t)board_temp_deg_c,
+                                       (uint16_t)sideboard_leds_R);
+            UartReporting_OnFrame(&uartReportingState);
+            HAL_UART_Transmit_DMA(&huart3, (uint8_t *)&feedbackFrame, sizeof(feedbackFrame));
           }
         #endif
       }

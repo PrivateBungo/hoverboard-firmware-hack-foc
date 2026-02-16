@@ -50,7 +50,9 @@ Src/stm32f1xx_it.c \
 Src/BLDC_controller_data.c \
 Src/BLDC_controller.c \
 core/supervisor/input_supervisor.c \
-core/supervisor/mode_supervisor.c
+core/supervisor/mode_supervisor.c \
+core/io/uart_reporting.c \
+core/io/input_decode.c
 
 # ASM sources
 ASM_SOURCES =  \
@@ -104,7 +106,8 @@ C_INCLUDES =  \
 -IDrivers/STM32F1xx_HAL_Driver/Inc/Legacy \
 -IDrivers/CMSIS/Device/ST/STM32F1xx/Include \
 -IDrivers/CMSIS/Include \
--Icore/supervisor
+-Icore/supervisor \
+-Icore/io
 
 
 # compile gcc flags
