@@ -228,8 +228,13 @@ int main(void) {
   int16_t board_temp_adcFilt  = adc_buffer.temp;
 
   #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
-    uint8_t prevLeftErrCode  = g_errCodeLeftEffective;
-    uint8_t prevRightErrCode = g_errCodeRightEffective;
+    uint8_t prevLeftErrCode    = g_errCodeLeftEffective;
+    uint8_t prevRightErrCode   = g_errCodeRightEffective;
+    uint8_t prevTimeoutFlgADC  = timeoutFlgADC;
+    uint8_t prevTimeoutFlgSerial = timeoutFlgSerial;
+    uint8_t prevTimeoutFlgGen  = timeoutFlgGen;
+    uint8_t prevEnableState    = enable;
+    uint8_t prevCtrlModReq     = ctrlModReq;
     #ifndef VARIANT_TRANSPOTTER
       uint8_t prevStallActiveLeft  = 0U;
       uint8_t prevStallActiveRight = 0U;
@@ -290,6 +295,49 @@ int main(void) {
 
     readCommand();                        // Read Command: input1[inIdx].cmd, input2[inIdx].cmd
     calcAvgSpeed();                       // Calculate average measured speed: speedAvg, speedAvgAbs
+
+    #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
+      if (timeoutFlgADC != prevTimeoutFlgADC) {
+        printf("SafetyFault ADC timeout %s (batADC:%i tempADC:%i)\r\n",
+          (timeoutFlgADC != 0U) ? "ASSERT" : "CLEAR",
+          (int)batVoltage,
+          (int)adc_buffer.temp);
+        prevTimeoutFlgADC = timeoutFlgADC;
+      }
+
+      if (timeoutFlgSerial != prevTimeoutFlgSerial) {
+        printf("SafetyFault Serial timeout %s\r\n",
+          (timeoutFlgSerial != 0U) ? "ASSERT" : "CLEAR");
+        prevTimeoutFlgSerial = timeoutFlgSerial;
+      }
+
+      if (timeoutFlgGen != prevTimeoutFlgGen) {
+        printf("SafetyFault General timeout %s\r\n",
+          (timeoutFlgGen != 0U) ? "ASSERT" : "CLEAR");
+        prevTimeoutFlgGen = timeoutFlgGen;
+      }
+
+      if (ctrlModReq != prevCtrlModReq) {
+        printf("SafetyMode ctrlModReq %u -> %u (toADC:%u toSER:%u toGEN:%u)\r\n",
+          (unsigned)prevCtrlModReq,
+          (unsigned)ctrlModReq,
+          (unsigned)timeoutFlgADC,
+          (unsigned)timeoutFlgSerial,
+          (unsigned)timeoutFlgGen);
+        prevCtrlModReq = ctrlModReq;
+      }
+
+      if (enable != prevEnableState) {
+        printf("SafetyState motors %s (ErrL:%u ErrR:%u toADC:%u toSER:%u toGEN:%u)\r\n",
+          (enable != 0U) ? "ENABLED" : "DISABLED",
+          (unsigned)g_errCodeLeftEffective,
+          (unsigned)g_errCodeRightEffective,
+          (unsigned)timeoutFlgADC,
+          (unsigned)timeoutFlgSerial,
+          (unsigned)timeoutFlgGen);
+        prevEnableState = enable;
+      }
+    #endif
 
     #ifndef VARIANT_TRANSPOTTER
       // ####### MOTOR ENABLING: Only if the initial input is very small (for SAFETY) #######

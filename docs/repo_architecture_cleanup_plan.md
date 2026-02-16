@@ -298,6 +298,9 @@ This section must be updated in each iteration to maintain continuity.
   - Compatibility notes:
     - Existing source layout under `Src/` + `Inc/` remains the active build path.
     - New folders and files are additive and non-invasive for this iteration.
+  - Follow-up adjustments after review:
+    - Added safety-focused serial debug transition logs in `Src/main.c` for timeout assertions/clears (`timeoutFlgADC`, `timeoutFlgSerial`, `timeoutFlgGen`), control-mode changes (`ctrlModReq`), and motor enable/disable transitions.
+    - Goal: make safety-relevant runtime state changes explicit on debug serial during bench/road testing.
   - Next step:
     - Iteration 2: move timeout/failsafe and mode arbitration logic from `main.c` into `core/supervisor/*` with behavior-preserving integration.
 
