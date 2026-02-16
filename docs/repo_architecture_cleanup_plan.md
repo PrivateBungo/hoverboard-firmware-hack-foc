@@ -260,9 +260,9 @@ Validation:
 This section must be updated in each iteration to maintain continuity.
 
 ### Global status
-- Overall cleanup program: **Iterations 1-2 closed and validated; migration in progress**.
-- Current iteration: **2 (extract supervisors from `main.c`) — closed**.
-- Next planned iteration: **3 (extract IO/telemetry surfaces) — pending merge/start**.
+- Overall cleanup program: **Iterations 1-3 closed and validated; migration in progress**.
+- Current iteration: **3 (extract IO/telemetry surfaces) — closed**.
+- Next planned iteration: **4 (introduce FOC adapter boundary) — pending merge/start**.
 
 ### Completed so far
 - Added this architecture cleanup plan.
@@ -274,12 +274,32 @@ This section must be updated in each iteration to maintain continuity.
 - Added docs and config placeholder READMEs for the target structure while keeping existing runtime paths unchanged.
 - Ran build validation after structural prep.
 - Extracted supervisor boundaries from `main.c` for timeout/failsafe observation and control-mode arbitration (iteration 2).
+- Extracted IO/telemetry boundaries from `main.c` into `core/io/*` for input decode snapshotting and UART feedback frame assembly (iteration 3).
 
 ### Not started yet
 - No BLDC generated-file relocation has been executed yet.
 - No active macro/config split from `Inc/config.h` has been executed yet.
 
 ### Iteration log
+
+- **Iteration 3 — 2026-02-16**
+  - Scope executed:
+    - Integrated IO modules into active build path (`Makefile`) and include path wiring.
+    - Added `core/io/input_decode.*` boundary with `InputDecodePair` and `InputDecode_BuildPair(...)` to isolate decoded input snapshot composition used by periodic debug reporting.
+    - Expanded `core/io/uart_reporting.*` with `UartReportingFrame` and `UartReporting_PrepareFrame(...)` so UART feedback framing/checksum are owned by `core/io` rather than inlined in `Src/main.c`.
+    - Wired `Src/main.c` to use `UartReporting_OnFrame(...)` and `UartReporting_PrepareFrame(...)` for feedback serial output while preserving frame format and DMA dispatch behavior.
+  - Build/check commands and results:
+    - `make clean` → passed.
+    - `make -j4` → blocked in Codex environment (`arm-none-eabi-gcc` missing).
+  - Compatibility notes:
+    - Feedback serial packet fields and checksum formula remain unchanged.
+    - Debug serial content remains backward-compatible; input and command values now flow through the `input_decode` boundary before printing.
+  - Review notes / plan tweaks:
+    - Iteration sequencing still looks solid; extracting IO before the FOC adapter remains the lowest-risk order.
+    - Minor tweak recommended for Iteration 4: keep adapter work strictly at integration points first (no early unit-scaling cleanups), then follow with optional cleanup commit to reduce regression risk.
+  - Next step:
+    - Iteration 4: introduce `core/control/foc_adapter.*` active boundary and route BLDC integration through it without touching generated control math.
+
 
 - **Iteration 2 — 2026-02-16**
   - Scope executed:
@@ -293,6 +313,8 @@ This section must be updated in each iteration to maintain continuity.
   - Compatibility notes:
     - Existing runtime globals and macro semantics (`ctrlModReq`, timeout flags, stall decay feature gates) remain unchanged.
     - Extraction is behavior-preserving and limited to supervisor boundary introduction + wiring.
+  - Hardware validation feedback (user test):
+    - Firmware was tested successfully on-device after Iteration 2 changes and behavior matched expected operation.
   - Next step:
     - Iteration 3: move UART reporting and input decode boundaries into `core/io/*` with protocol compatibility preserved.
 
