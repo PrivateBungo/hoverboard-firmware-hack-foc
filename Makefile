@@ -52,7 +52,8 @@ Src/BLDC_controller.c \
 core/supervisor/input_supervisor.c \
 core/supervisor/mode_supervisor.c \
 core/io/uart_reporting.c \
-core/io/input_decode.c
+core/io/input_decode.c \
+core/control/foc_adapter.c
 
 # ASM sources
 ASM_SOURCES =  \
@@ -107,7 +108,8 @@ C_INCLUDES =  \
 -IDrivers/CMSIS/Device/ST/STM32F1xx/Include \
 -IDrivers/CMSIS/Include \
 -Icore/supervisor \
--Icore/io
+-Icore/io \
+-Icore/control
 
 
 # compile gcc flags
