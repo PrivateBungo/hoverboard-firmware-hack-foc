@@ -10,7 +10,6 @@
 
 #define BOOT_NEUTRAL_OBSERVE_MS  (2000U)
 #define BOOT_NEUTRAL_STABLE_BAND (30)
-#define BOOT_NEUTRAL_MIN_OBSERVE_MS_FOR_EARLY_EXIT (300U)
 #define BOOT_NEUTRAL_ABS(a)      (((a) < 0) ? (-(a)) : (a))
 
 #define PERSIST_CONFIG_FLASH_ADDR_DBG \
@@ -93,11 +92,10 @@ static void BootNeutralSupervisor_DebugPrintApplyDecision(const BootNeutralSuper
            (int)neutralR,
            (saveOk != 0U) ? "OK" : "FAIL");
   } else {
-    printf("BOOTAPPLY rcAll=%u stabAll=%u n=%u earlyActive=%u load valid=%u nL=%i nR=%i beep=0\r\n",
+    printf("BOOTAPPLY rcAll=%u stabAll=%u n=%u load valid=%u nL=%i nR=%i beep=0\r\n",
            (unsigned)state->rc_present_all_window,
            (unsigned)state->stable_neutral_all_window,
            (unsigned)state->sampleCount,
-           (unsigned)state->early_exit_active_command,
            (unsigned)loadValid,
            (int)neutralL,
            (int)neutralR);
@@ -119,7 +117,6 @@ void BootNeutralSupervisor_Init(BootNeutralSupervisorState *state, uint32_t nowM
   state->neutralLeft = 0;
   state->neutralRight = 0;
   state->neutral_active = 0U;
-  state->early_exit_active_command = 0U;
   state->bootDbgLastMs = 0U;
 
   BootNeutralSupervisor_DebugPrintPersistNeutral();
@@ -192,10 +189,8 @@ void BootNeutralSupervisor_Process(BootNeutralSupervisorState *state,
 
   if (state->state == BOOT_NEUTRAL_STATE_OBSERVE) {
     uint32_t elapsedMs;
-    uint8_t activeCommand;
 
     elapsedMs = nowMs - state->boot_t0;
-    activeCommand = (uint8_t)((cmdL_filt != 0) || (cmdR_filt != 0));
 
     if (rcPresent == 0U) {
       state->rc_present_all_window = 0U;
@@ -213,13 +208,6 @@ void BootNeutralSupervisor_Process(BootNeutralSupervisorState *state,
       }
     }
 
-    if ((elapsedMs >= BOOT_NEUTRAL_MIN_OBSERVE_MS_FOR_EARLY_EXIT) &&
-        (rcPresent != 0U) &&
-        (activeCommand != 0U)) {
-      state->early_exit_active_command = 1U;
-      state->state = BOOT_NEUTRAL_STATE_APPLY;
-    }
-
     if (elapsedMs >= BOOT_NEUTRAL_OBSERVE_MS) {
       state->state = BOOT_NEUTRAL_STATE_APPLY;
     }
@@ -230,8 +218,7 @@ void BootNeutralSupervisor_Process(BootNeutralSupervisorState *state,
     uint8_t saveOk = 0U;
     uint8_t loadValid = 0U;
 
-    if ((state->early_exit_active_command == 0U) &&
-        (state->rc_present_all_window != 0U) &&
+    if ((state->rc_present_all_window != 0U) &&
         (state->stable_neutral_all_window != 0U) &&
         (state->sampleCount > 0U)) {
       state->neutralLeft = (int16_t)(state->sumLeft / (int32_t)state->sampleCount);

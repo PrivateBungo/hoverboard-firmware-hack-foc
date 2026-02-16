@@ -20,7 +20,6 @@ typedef struct {
   int16_t neutralLeft;
   int16_t neutralRight;
   uint8_t neutral_active;
-  uint8_t early_exit_active_command;
   uint32_t bootDbgLastMs;
 } BootNeutralSupervisorState;
 
