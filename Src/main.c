@@ -34,6 +34,7 @@
 #include "input_supervisor.h"
 #include "mode_supervisor.h"
 #include "stall_supervisor.h"
+#include "wheel_command_supervisor.h"
 #include "uart_reporting.h"
 #include "input_decode.h"
 #include "foc_adapter.h"
@@ -151,6 +152,7 @@ static int16_t    speed;                // local variable for speed. -1000 to 10
   static DriveControlState driveControlState;
   static DriveControlStallDecayState stallDecayStateLeft;
   static DriveControlStallDecayState stallDecayStateRight;
+  static WheelCommandSupervisorState wheelCommandSupervisorState;
   static InputSupervisorState inputSupervisorState;
   static ModeSupervisorState modeSupervisorState;
   static StallSupervisorState stallSupervisorState;
@@ -221,6 +223,7 @@ int main(void) {
     DriveControl_Init(&driveControlState);
     DriveControl_ResetStallDecay(&stallDecayStateLeft);
     DriveControl_ResetStallDecay(&stallDecayStateRight);
+    WheelCommandSupervisor_Init(&wheelCommandSupervisorState);
     InputSupervisor_Init(&inputSupervisorState);
     ModeSupervisor_Init(&modeSupervisorState, ctrlModReq);
     StallSupervisor_Init(&stallSupervisorState);
@@ -433,6 +436,7 @@ int main(void) {
       #endif
 
       DriveControl_MixCommands(speed, steer, &cmdL, &cmdR);
+      WheelCommandSupervisor_Update(&wheelCommandSupervisorState, cmdL, cmdR, &cmdL, &cmdR);
       DriveControl_MapCommandsToPwm(cmdL, cmdR, &pwml, &pwmr);
 
       {
