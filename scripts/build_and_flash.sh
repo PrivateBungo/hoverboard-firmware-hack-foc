@@ -9,7 +9,7 @@ FIRMWARE_ELF="${FIRMWARE_ELF:-/home/gijs/Documents/hoverboard-firmware-hack-foc/
 cd "$REPO_DIR"
 
 echo "==> Pulling latest changes"
-git pull --ff-only
+sudo -u gijs git pull --ff-only
 
 echo "==> Cleaning build artifacts"
 make clean

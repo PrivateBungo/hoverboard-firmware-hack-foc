@@ -208,6 +208,7 @@ For each iteration:
 4. Verify no behavioral regressions for the selected scope.
 5. Commit with a clear message.
 6. Update the progress section in this document.
+7. Update `docs/architecture/README.md` when architecture boundaries or control/data-flow responsibilities change.
 
 ### Suggested 5-iteration rollout
 
@@ -260,9 +261,9 @@ Validation:
 This section must be updated in each iteration to maintain continuity.
 
 ### Global status
-- Overall cleanup program: **Iterations 1-3 closed and validated; migration in progress**.
-- Current iteration: **3 (extract IO/telemetry surfaces) — closed**.
-- Next planned iteration: **4 (introduce FOC adapter boundary) — pending merge/start**.
+- Overall cleanup program: **Iterations 1-4 closed and validated; migration in progress**.
+- Current iteration: **4 (introduce FOC adapter boundary) — closed**.
+- Next planned iteration: **5 (config split + docs finalization) — pending merge/start**.
 
 ### Completed so far
 - Added this architecture cleanup plan.
@@ -275,12 +276,34 @@ This section must be updated in each iteration to maintain continuity.
 - Ran build validation after structural prep.
 - Extracted supervisor boundaries from `main.c` for timeout/failsafe observation and control-mode arbitration (iteration 2).
 - Extracted IO/telemetry boundaries from `main.c` into `core/io/*` for input decode snapshotting and UART feedback frame assembly (iteration 3).
+- Added active FOC adapter module (`core/control/foc_adapter.*`) and integrated it into the build path (iteration 4).
+- Routed generated BLDC input/output stepping in `Src/bldc.c` through the adapter boundary while preserving generated controller sources unchanged.
+- Routed `Src/main.c` runtime reads of motor speed and DC link current through adapter accessors.
 
 ### Not started yet
 - No BLDC generated-file relocation has been executed yet.
 - No active macro/config split from `Inc/config.h` has been executed yet.
 
 ### Iteration log
+
+- **Iteration 4 — 2026-02-16**
+  - Scope executed:
+    - Added concrete adapter implementation in `core/control/foc_adapter.*` to encapsulate generated BLDC model instances, input/output structures, and model stepping entrypoints.
+    - Wired `Src/bldc.c` motor-control interrupt path through adapter calls (`FocAdapter_SetInputFrame`, `FocAdapter_Step`, `FocAdapter_GetOutput`, and adapter-side error-bit clear helper) instead of touching generated extern symbols directly.
+    - Wired `Src/main.c` runtime telemetry/supervision reads for motor speed and DC-link current through adapter accessors.
+    - Updated `Makefile` to compile `core/control/foc_adapter.c` and expose include paths for `core/control`.
+    - Updated architecture documentation in `docs/architecture/README.md` to keep architectural reference in sync with the implementation boundary introduced in this iteration.
+  - Build/check commands and results:
+    - `make clean` → passed.
+    - `make -j4` → blocked in Codex environment (`arm-none-eabi-gcc` missing).
+  - Compatibility notes:
+    - Generated model sources (`Src/BLDC_controller.c`, `Src/BLDC_controller_data.c`) remain untouched.
+    - Existing control loop behavior and serial-facing semantics are preserved; this step focuses on boundary introduction and call routing only.
+  - Review notes / plan tweaks:
+    - Iteration contract now explicitly requires updating `docs/architecture/README.md` whenever architecture boundaries/dataflow responsibilities are changed.
+  - Next step:
+    - Iteration 5: split `Inc/config.h` into target-layered config headers with temporary compatibility facade and finalize docs structure cleanup.
+
 
 - **Iteration 3 — 2026-02-16**
   - Scope executed:

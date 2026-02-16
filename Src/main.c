@@ -35,6 +35,7 @@
 #include "mode_supervisor.h"
 #include "uart_reporting.h"
 #include "input_decode.h"
+#include "foc_adapter.h"
 
 #if defined(DEBUG_I2C_LCD) || defined(SUPPORT_LCD)
 #include "hd44780.h"
@@ -64,10 +65,6 @@ volatile uint8_t uart_buf[200];
 //---------------
 extern P    rtP_Left;                   /* Block parameters (auto storage) */
 extern P    rtP_Right;                  /* Block parameters (auto storage) */
-extern ExtY rtY_Left;                   /* External outputs */
-extern ExtY rtY_Right;                  /* External outputs */
-extern ExtU rtU_Left;                   /* External inputs */
-extern ExtU rtU_Right;                  /* External inputs */
 //---------------
 
 extern uint8_t     inIdx;               // input index used for dual-inputs
@@ -444,8 +441,8 @@ int main(void) {
           STALL_DECAY_IN_VLT_MODE,
           VLT_MODE);
 
-        pwmlAfterDecay = DriveControl_ApplyStallDecay((int16_t)pwml, rtY_Left.n_mot, stallDecayModeActive, &stallDecayStateLeft);
-        pwmrAfterDecay = DriveControl_ApplyStallDecay((int16_t)pwmr, rtY_Right.n_mot, stallDecayModeActive, &stallDecayStateRight);
+        pwmlAfterDecay = DriveControl_ApplyStallDecay((int16_t)pwml, FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_LEFT), stallDecayModeActive, &stallDecayStateLeft);
+        pwmrAfterDecay = DriveControl_ApplyStallDecay((int16_t)pwmr, FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_RIGHT), stallDecayModeActive, &stallDecayStateRight);
         pwml = pwmlAfterDecay;
         pwmr = pwmrAfterDecay;
 
@@ -461,8 +458,8 @@ int main(void) {
               stallDecayStateLeft.stallTimerMs,
               stallActiveRight,
               stallDecayStateRight.stallTimerMs,
-              (int16_t)rtY_Left.n_mot,
-              (int16_t)rtY_Right.n_mot,
+              (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_LEFT),
+              (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_RIGHT),
               pwmlBeforeDecay,
               pwmlAfterDecay,
               pwmrBeforeDecay,
@@ -477,8 +474,8 @@ int main(void) {
             printf("StallDecay act tL:%ums tR:%ums nL:%i nR:%i inL:%i outL:%i inR:%i outR:%i limL:%u limR:%u\r\n",
               stallDecayStateLeft.stallTimerMs,
               stallDecayStateRight.stallTimerMs,
-              (int16_t)rtY_Left.n_mot,
-              (int16_t)rtY_Right.n_mot,
+              (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_LEFT),
+              (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_RIGHT),
               pwmlBeforeDecay,
               pwmlAfterDecay,
               pwmrBeforeDecay,
@@ -609,8 +606,8 @@ int main(void) {
     batVoltageCalib = batVoltage * BAT_CALIB_REAL_VOLTAGE / BAT_CALIB_ADC;
 
     // ####### CALC DC LINK CURRENT #######
-    left_dc_curr  = -(rtU_Left.i_DCLink * 100) / A2BIT_CONV;   // Left DC Link Current * 100 
-    right_dc_curr = -(rtU_Right.i_DCLink * 100) / A2BIT_CONV;  // Right DC Link Current * 100
+    left_dc_curr  = -(FocAdapter_GetDcLinkCurrent(FOC_ADAPTER_MOTOR_LEFT) * 100) / A2BIT_CONV;   // Left DC Link Current * 100 
+    right_dc_curr = -(FocAdapter_GetDcLinkCurrent(FOC_ADAPTER_MOTOR_RIGHT) * 100) / A2BIT_CONV;  // Right DC Link Current * 100
     dc_curr       = left_dc_curr + right_dc_curr;            // Total DC Link Current * 100
 
     // ####### DEBUG SERIAL OUT #######
@@ -662,8 +659,8 @@ int main(void) {
                                        (uint16_t)SERIAL_START_FRAME,
                                        (int16_t)input1[inIdx].cmd,
                                        (int16_t)input2[inIdx].cmd,
-                                       (int16_t)rtY_Right.n_mot,
-                                       (int16_t)rtY_Left.n_mot,
+                                       (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_RIGHT),
+                                       (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_LEFT),
                                        (int16_t)batVoltageCalib,
                                        (int16_t)board_temp_deg_c,
                                        (uint16_t)sideboard_leds_L);
@@ -677,8 +674,8 @@ int main(void) {
                                        (uint16_t)SERIAL_START_FRAME,
                                        (int16_t)input1[inIdx].cmd,
                                        (int16_t)input2[inIdx].cmd,
-                                       (int16_t)rtY_Right.n_mot,
-                                       (int16_t)rtY_Left.n_mot,
+                                       (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_RIGHT),
+                                       (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_LEFT),
                                        (int16_t)batVoltageCalib,
                                        (int16_t)board_temp_deg_c,
                                        (uint16_t)sideboard_leds_R);
