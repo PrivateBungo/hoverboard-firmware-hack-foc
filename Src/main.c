@@ -182,7 +182,8 @@ typedef struct {
   uint16_t sampleCount;
   int16_t neutralLeft;
   int16_t neutralRight;
-  uint8_t rcPresentContinuous;
+  uint8_t rcObserved;
+  uint8_t rcMissingAfterObserved;
   uint8_t neutralStableContinuous;
   uint8_t applyReady;
 } BootNeutralCalibrationState;
@@ -240,7 +241,8 @@ static void Main_InitBootNeutralCalibration(void) {
   bootNeutralState.sampleCount = 0U;
   bootNeutralState.neutralLeft = 0;
   bootNeutralState.neutralRight = 0;
-  bootNeutralState.rcPresentContinuous = 1U;
+  bootNeutralState.rcObserved = 0U;
+  bootNeutralState.rcMissingAfterObserved = 0U;
   bootNeutralState.neutralStableContinuous = 1U;
   bootNeutralState.applyReady = 0U;
 }
@@ -254,21 +256,24 @@ static void Main_UpdateBootNeutralObservation(int16_t filteredLeft, int16_t filt
 
   if ((HAL_GetTick() - bootNeutralState.observeStartTick) < BOOT_NEUTRAL_OBSERVE_MS) {
     rcPresent = Main_IsRcInputSignalPresent();
-    if (rcPresent == 0U) {
-      bootNeutralState.rcPresentContinuous = 0U;
-    }
+    if (rcPresent != 0U) {
+      bootNeutralState.rcObserved = 1U;
 
-    if ((ABS(filteredLeft) > BOOT_NEUTRAL_STABLE_BAND) || (ABS(filteredRight) > BOOT_NEUTRAL_STABLE_BAND)) {
-      bootNeutralState.neutralStableContinuous = 0U;
-    }
+      if ((ABS(filteredLeft) > BOOT_NEUTRAL_STABLE_BAND) || (ABS(filteredRight) > BOOT_NEUTRAL_STABLE_BAND)) {
+        bootNeutralState.neutralStableContinuous = 0U;
+      }
 
-    bootNeutralState.sumLeft += filteredLeft;
-    bootNeutralState.sumRight += filteredRight;
-    if (bootNeutralState.sampleCount < 65535U) {
-      bootNeutralState.sampleCount++;
+      bootNeutralState.sumLeft += filteredLeft;
+      bootNeutralState.sumRight += filteredRight;
+      if (bootNeutralState.sampleCount < 65535U) {
+        bootNeutralState.sampleCount++;
+      }
+    } else if (bootNeutralState.rcObserved != 0U) {
+      bootNeutralState.rcMissingAfterObserved = 1U;
     }
   } else {
-    if ((bootNeutralState.rcPresentContinuous != 0U) &&
+    if ((bootNeutralState.rcObserved != 0U) &&
+        (bootNeutralState.rcMissingAfterObserved == 0U) &&
         (bootNeutralState.neutralStableContinuous != 0U) &&
         (bootNeutralState.sampleCount > 0U)) {
       bootNeutralState.neutralLeft = (int16_t)(bootNeutralState.sumLeft / (int32_t)bootNeutralState.sampleCount);
