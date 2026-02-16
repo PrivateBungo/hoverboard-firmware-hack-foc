@@ -22,6 +22,7 @@
 
 #include <stdio.h>
 #include <stdlib.h> // for abs()
+#include <stddef.h>
 #include "stm32f1xx_hal.h"
 #include "defines.h"
 #include "setup.h"
@@ -196,6 +197,94 @@ typedef struct {
 
 static BootNeutralCalibrationState bootNeutralState;
 
+typedef struct __attribute__((packed)) {
+  uint32_t magic;
+  uint16_t version;
+  uint16_t size;
+  int16_t neutral_pwml;
+  int16_t neutral_pwmr;
+  uint16_t checksum;
+} PersistNeutralConfigRaw;
+
+#define PERSIST_CONFIG_FLASH_ADDR_DBG \
+  (FLASH_BASE + (((uint32_t)(*(uint16_t *)FLASHSIZE_BASE)) * 1024U) - FLASH_PAGE_SIZE)
+#define PERSIST_CONFIG_MAGIC_DBG (0x4E454355UL)
+
+static uint16_t Main_DebugPersistChecksum(const PersistNeutralConfigRaw *cfg) {
+  const uint8_t *raw;
+  uint16_t checksum;
+  uint16_t idx;
+
+  if (cfg == 0) {
+    return 0U;
+  }
+
+  raw = (const uint8_t *)cfg;
+  checksum = 0U;
+  for (idx = 0U; idx < (uint16_t)(offsetof(PersistNeutralConfigRaw, checksum)); idx++) {
+    checksum = (uint16_t)(checksum + raw[idx]);
+  }
+  return checksum;
+}
+
+static void Main_DebugPrintPersistNeutral(void) {
+  const PersistNeutralConfigRaw *cfg;
+  int16_t neutralL;
+  int16_t neutralR;
+  uint8_t valid;
+  uint16_t checksumCalc;
+
+  cfg = (const PersistNeutralConfigRaw *)PERSIST_CONFIG_FLASH_ADDR_DBG;
+  checksumCalc = Main_DebugPersistChecksum(cfg);
+  valid = PersistConfig_LoadNeutral(&neutralL, &neutralR);
+
+  if (valid != 0U) {
+    printf("PersistNeutral: valid=%u magic=0x%08lX ver=%u size=%u chk=0x%04X chk_calc=0x%04X nL=%i nR=%i\\r\\n",
+           (unsigned)valid,
+           (unsigned long)cfg->magic,
+           (unsigned)cfg->version,
+           (unsigned)cfg->size,
+           (unsigned)cfg->checksum,
+           (unsigned)checksumCalc,
+           (int)neutralL,
+           (int)neutralR);
+  } else {
+    printf("PersistNeutral: valid=0 (no stored config) magic=0x%08lX ver=%u size=%u chk=0x%04X chk_calc=0x%04X nLraw=%i nRraw=%i expMagic=0x%08lX\\r\\n",
+           (unsigned long)cfg->magic,
+           (unsigned)cfg->version,
+           (unsigned)cfg->size,
+           (unsigned)cfg->checksum,
+           (unsigned)checksumCalc,
+           (int)cfg->neutral_pwml,
+           (int)cfg->neutral_pwmr,
+           (unsigned long)PERSIST_CONFIG_MAGIC_DBG);
+  }
+}
+
+static void Main_DebugPrintApplyDecision(uint8_t learned,
+                                         uint8_t saveOk,
+                                         uint8_t loadValid,
+                                         int16_t neutralL,
+                                         int16_t neutralR) {
+  if (learned != 0U) {
+    printf("BOOTAPPLY rcAll=%u stabAll=%u n=%u learn nL=%i nR=%i save=%s beep=1\\r\\n",
+           (unsigned)bootNeutralState.rc_present_all_window,
+           (unsigned)bootNeutralState.stable_neutral_all_window,
+           (unsigned)bootNeutralState.sampleCount,
+           (int)neutralL,
+           (int)neutralR,
+           (saveOk != 0U) ? "OK" : "FAIL");
+  } else {
+    printf("BOOTAPPLY rcAll=%u stabAll=%u n=%u load valid=%u nL=%i nR=%i beep=0\\r\\n",
+           (unsigned)bootNeutralState.rc_present_all_window,
+           (unsigned)bootNeutralState.stable_neutral_all_window,
+           (unsigned)bootNeutralState.sampleCount,
+           (unsigned)loadValid,
+           (int)neutralL,
+           (int)neutralR);
+  }
+}
+
 #define STALL_ERR_BIT (0x04U)
 
 static uint8_t Main_IsRcInputSignalPresent(void) {
@@ -251,6 +340,8 @@ static void Main_InitBootNeutralCalibration(void) {
   bootNeutralState.neutralLeft = 0;
   bootNeutralState.neutralRight = 0;
   bootNeutralState.neutral_active = 0U;
+
+  Main_DebugPrintPersistNeutral();
 }
 
 static void Main_UpdateBootNeutralObservation(int16_t filteredLeft, int16_t filteredRight) {
@@ -284,23 +375,36 @@ static void Main_UpdateBootNeutralObservation(int16_t filteredLeft, int16_t filt
   }
 
   if (bootNeutralState.state == BOOT_NEUTRAL_STATE_APPLY) {
+    uint8_t learned = 0U;
+    uint8_t saveOk = 0U;
+    uint8_t loadValid = 0U;
+
     if ((bootNeutralState.rc_present_all_window != 0U) &&
         (bootNeutralState.stable_neutral_all_window != 0U) &&
         (bootNeutralState.sampleCount > 0U)) {
       bootNeutralState.neutralLeft = (int16_t)(bootNeutralState.sumLeft / (int32_t)bootNeutralState.sampleCount);
       bootNeutralState.neutralRight = (int16_t)(bootNeutralState.sumRight / (int32_t)bootNeutralState.sampleCount);
-      if (PersistConfig_SaveNeutral(bootNeutralState.neutralLeft, bootNeutralState.neutralRight) != 0U) {
+      learned = 1U;
+      saveOk = PersistConfig_SaveNeutral(bootNeutralState.neutralLeft, bootNeutralState.neutralRight);
+      if (saveOk != 0U) {
         beepShort(7);
         beepShort(7);
       }
     } else {
       int16_t savedLeft = 0;
       int16_t savedRight = 0;
-      if (PersistConfig_LoadNeutral(&savedLeft, &savedRight) != 0U) {
+      loadValid = PersistConfig_LoadNeutral(&savedLeft, &savedRight);
+      if (loadValid != 0U) {
         bootNeutralState.neutralLeft = savedLeft;
         bootNeutralState.neutralRight = savedRight;
       }
     }
+
+    Main_DebugPrintApplyDecision(learned,
+                                 saveOk,
+                                 loadValid,
+                                 bootNeutralState.neutralLeft,
+                                 bootNeutralState.neutralRight);
 
     bootNeutralState.neutral_active = 1U;
     bootNeutralState.state = BOOT_NEUTRAL_STATE_RUN;
@@ -571,10 +675,15 @@ int main(void) {
       #endif
 
       {
+        static uint32_t bootDbgLastMs = 0U;
         int16_t cmdL_filt;
         int16_t cmdR_filt;
         int16_t cmdL_adj;
         int16_t cmdR_adj;
+        uint32_t nowMs;
+        uint32_t bootElapsedMs;
+        uint8_t rcPresentNow;
+        uint8_t stableNow;
 
         DriveControl_MixCommands(speed, steer, &cmdL_filt, &cmdR_filt);
         WheelCommandSupervisor_Update(&wheelCommandSupervisorState, cmdL_filt, cmdR_filt, &cmdL_filt, &cmdR_filt);
@@ -596,6 +705,34 @@ int main(void) {
         if (bootNeutralState.state == BOOT_NEUTRAL_STATE_OBSERVE) {
           pwml = 0;
           pwmr = 0;
+        }
+
+        nowMs = HAL_GetTick();
+        bootElapsedMs = nowMs - bootNeutralState.boot_t0;
+        rcPresentNow = Main_IsRcInputSignalPresent();
+        stableNow = (uint8_t)((ABS(cmdL_filt) <= BOOT_NEUTRAL_STABLE_BAND) &&
+                              (ABS(cmdR_filt) <= BOOT_NEUTRAL_STABLE_BAND));
+
+        if ((bootElapsedMs <= 3000U) && ((nowMs - bootDbgLastMs) >= 200U)) {
+          bootDbgLastMs = nowMs;
+          printf("BOOTDBG t=%lu el=%lu st=%u nAct=%u rc=%u toGEN=%u toSER=%u stab=%u band=%u cmdF=(%i,%i) cmdA=(%i,%i) pwm=(%i,%i) ctrl=%u ena=%u\\r\\n",
+                 (unsigned long)nowMs,
+                 (unsigned long)bootElapsedMs,
+                 (unsigned)bootNeutralState.state,
+                 (unsigned)bootNeutralState.neutral_active,
+                 (unsigned)rcPresentNow,
+                 (unsigned)timeoutFlgGen,
+                 (unsigned)timeoutFlgSerial,
+                 (unsigned)stableNow,
+                 (unsigned)BOOT_NEUTRAL_STABLE_BAND,
+                 (int)cmdL_filt,
+                 (int)cmdR_filt,
+                 (int)cmdL_adj,
+                 (int)cmdR_adj,
+                 (int)pwml,
+                 (int)pwmr,
+                 (unsigned)ctrlModReq,
+                 (unsigned)enable);
         }
       }
 
