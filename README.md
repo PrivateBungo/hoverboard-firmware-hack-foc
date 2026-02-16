@@ -80,11 +80,12 @@ Raw Joystick Input
 ### Layer responsibilities
 
 - **Raw Joystick/Input Domain**: acquisition and normalization of ADC/UART/PPM/PWM/Nunchuk signals into `input1/input2` raw values.
-- **User Intent / Policy Layer**: input-domain interpretation and shaping before torque mapping. This includes existing logic such as neutral/offset calibration, deadband handling, hysteresis, and low-pass/rate-limited shaping in the supervisory loop.
-- **Torque Mapping / Mixing Domain**: conversion of longitudinal + steering intent into per-wheel torque commands (left/right mixing and sign mapping).
+- **User Intent / Policy Layer**: input-domain interpretation of human commands into high-level longitudinal/steering intent (no torque-domain filtering here).
+- **Torque Mapping / Mixing Domain**: speed-intent to torque-request conversion (gain-only P on combined vehicle speed), asymmetric ramp limiting (slow-up/fast-down), and per-wheel left/right mixing/sign mapping.
 - **FOC Domain (16 kHz ISR)**: high-rate motor control internals that execute torque/voltage/speed control and PWM generation.
 
 This separation is intentional: user interaction policy should evolve without forcing changes in torque internals or FOC timing-critical code.
+In this architecture, deadband, hysteresis, and low-pass filtering remain in the motor-control command-shaping domain near wheel command generation.
 
 ### Housekeeping rules
 

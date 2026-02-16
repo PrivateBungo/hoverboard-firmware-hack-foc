@@ -15,10 +15,7 @@
 #include <stdint.h>
 
 typedef struct {
-  int16_t longitudinalRateFixdt;
-  int16_t steeringRateFixdt;
-  int32_t longitudinalFixdt;
-  int32_t steeringFixdt;
+  uint8_t reserved;
 } UserIntentState;
 
 void UserIntent_Init(UserIntentState *state);
@@ -26,7 +23,6 @@ void UserIntent_Reset(UserIntentState *state);
 void UserIntent_BuildLongitudinalSteeringIntent(UserIntentState *state,
                                                 int16_t steeringCmd,
                                                 int16_t longitudinalCmd,
-                                                uint16_t rate,
                                                 int16_t *steeringIntent,
                                                 int16_t *longitudinalIntent);
 

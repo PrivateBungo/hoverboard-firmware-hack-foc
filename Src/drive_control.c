@@ -12,6 +12,96 @@
 #include "drive_control.h"
 #include "config.h"
 
+
+static int16_t DriveControl_ClampS16(int32_t value, int16_t lower, int16_t upper) {
+  if (value < lower) {
+    return lower;
+  }
+  if (value > upper) {
+    return upper;
+  }
+  return (int16_t)value;
+}
+
+static int16_t DriveControl_ComputeSpeedPTorque(int16_t speedRefCmd,
+                                                int16_t speedMeasRpm,
+                                                int16_t speedMaxRpm) {
+  int32_t vRefRpm;
+  int32_t speedErrRpm;
+  int32_t torqueCmd;
+  int32_t speedRange;
+
+  speedRange = (speedMaxRpm > 0) ? speedMaxRpm : 1;
+  vRefRpm = ((int32_t)speedRefCmd * speedRange) / INPUT_MAX;
+  speedErrRpm = vRefRpm - speedMeasRpm;
+
+  torqueCmd = (((int64_t)speedErrRpm * INPUT_MAX) * LONG_SPEED_KP_Q15) / ((int64_t)speedRange * 32768);
+
+  return DriveControl_ClampS16(torqueCmd, INPUT_MIN, INPUT_MAX);
+}
+
+static int16_t DriveControl_ApplyAsymmetricRamp(int16_t targetTorqueCmd,
+                                                uint16_t rampUpRate,
+                                                uint16_t rampDownRate,
+                                                DriveControlLongitudinalState *state) {
+  int32_t delta;
+  int32_t step;
+
+  if (state == 0) {
+    return targetTorqueCmd;
+  }
+
+  if (rampUpRate == 0U) {
+    rampUpRate = 1U;
+  }
+  if (rampDownRate == 0U) {
+    rampDownRate = 1U;
+  }
+
+  delta = (int32_t)targetTorqueCmd - state->longitudinalTorqueCmd;
+
+  if (delta > 0) {
+    step = (int32_t)rampUpRate;
+    if (delta > step) {
+      state->longitudinalTorqueCmd = (int16_t)(state->longitudinalTorqueCmd + step);
+    } else {
+      state->longitudinalTorqueCmd = targetTorqueCmd;
+    }
+  } else if (delta < 0) {
+    step = (int32_t)rampDownRate;
+    if (-delta > step) {
+      state->longitudinalTorqueCmd = (int16_t)(state->longitudinalTorqueCmd - step);
+    } else {
+      state->longitudinalTorqueCmd = targetTorqueCmd;
+    }
+  }
+
+  return state->longitudinalTorqueCmd;
+}
+
+void DriveControl_InitLongitudinal(DriveControlLongitudinalState *state) {
+  DriveControl_ResetLongitudinal(state);
+}
+
+void DriveControl_ResetLongitudinal(DriveControlLongitudinalState *state) {
+  if (state == 0) {
+    return;
+  }
+  state->longitudinalTorqueCmd = 0;
+}
+
+int16_t DriveControl_BuildLongitudinalTorque(DriveControlLongitudinalState *state,
+                                             int16_t speedRefCmd,
+                                             int16_t speedMeasRpm,
+                                             int16_t speedMaxRpm,
+                                             uint16_t rampUpRate,
+                                             uint16_t rampDownRate) {
+  int16_t torqueReq;
+
+  torqueReq = DriveControl_ComputeSpeedPTorque(speedRefCmd, speedMeasRpm, speedMaxRpm);
+  return DriveControl_ApplyAsymmetricRamp(torqueReq, rampUpRate, rampDownRate, state);
+}
+
 void DriveControl_MixCommands(int16_t speed, int16_t steer, int16_t *cmdL, int16_t *cmdR) {
 #if defined(TANK_STEERING) && !defined(VARIANT_HOVERCAR) && !defined(VARIANT_SKATEBOARD)
   *cmdL = steer;
