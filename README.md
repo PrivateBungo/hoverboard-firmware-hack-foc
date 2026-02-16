@@ -13,6 +13,7 @@ Table of Contents
 
 * **Wiki:** please check the wiki pages for [Getting Started](https://github.com/EFeru/hoverboard-firmware-hack-FOC/wiki#getting-started) and for [Troubleshooting](https://github.com/EFeru/hoverboard-firmware-hack-FOC/wiki#troubleshooting)
 * [Quick build + flash script](#quick-build--flash-script)
+* [Control Architecture Layers (User Intent vs Torque Domain)](#control-architecture-layers-user-intent-vs-torque-domain)
 * [Hardware](#hardware)
 * [FOC Firmware](#foc-firmware)
 * [Example Variants](#example-variants)
@@ -58,6 +59,40 @@ Example with custom paths:
 ```bash
 PROGRAMMER_CLI=/path/to/STM32_Programmer_CLI FIRMWARE_ELF=/path/to/build/hover.elf ./fw-update.sh
 ```
+
+
+---
+## Control Architecture Layers (User Intent vs Torque Domain)
+
+The control stack is organized as layered domains to keep high-level policy independent from motor-control internals.
+
+### Conceptual pipeline
+
+```text
+Raw Joystick Input
+→ User Intent / Policy Layer
+→ Longitudinal + Steering Intent
+→ Torque Mapping / Mixing
+→ Wheel Torque Commands
+→ FOC (16 kHz motor control domain)
+```
+
+### Layer responsibilities
+
+- **Raw Joystick/Input Domain**: acquisition and normalization of ADC/UART/PPM/PWM/Nunchuk signals into `input1/input2` raw values.
+- **User Intent / Policy Layer**: input-domain interpretation of human commands into high-level longitudinal/steering intent (no torque-domain filtering here).
+- **Torque Mapping / Mixing Domain**: speed-intent to torque-request conversion (gain-only P on combined vehicle speed), asymmetric ramp limiting (slow-up/fast-down), and per-wheel left/right mixing/sign mapping.
+- **FOC Domain (16 kHz ISR)**: high-rate motor control internals that execute torque/voltage/speed control and PWM generation.
+
+This separation is intentional: user interaction policy should evolve without forcing changes in torque internals or FOC timing-critical code.
+In this architecture, deadband, hysteresis, and low-pass filtering remain in the motor-control command-shaping domain near wheel command generation.
+
+### Housekeeping rules
+
+- Any significant architectural change **must** update this README.
+- High-level control policy must remain separate from motor-control internals.
+- No direct joystick-to-torque shortcuts are allowed outside the User Intent layer.
+- All new control behavior must enter through the User Intent layer first, then flow into torque mapping.
 
 ---
 ## Hardware

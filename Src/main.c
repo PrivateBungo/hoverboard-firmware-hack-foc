@@ -31,6 +31,7 @@
 #include "rtwtypes.h"
 #include "comms.h"
 #include "drive_control.h"
+#include "user_intent.h"
 #include "input_supervisor.h"
 #include "mode_supervisor.h"
 #include "stall_supervisor.h"
@@ -150,7 +151,8 @@ static uint8_t sideboard_leds_R;
 static int16_t    speed;                // local variable for speed. -1000 to 1000
 #ifndef VARIANT_TRANSPOTTER
   static int16_t  steer;                // local variable for steering. -1000 to 1000
-  static DriveControlState driveControlState;
+  static UserIntentState userIntentState;
+  static DriveControlLongitudinalState driveControlLongitudinalState;
   static DriveControlStallDecayState stallDecayStateLeft;
   static DriveControlStallDecayState stallDecayStateRight;
   static WheelCommandSupervisorState wheelCommandSupervisorState;
@@ -221,7 +223,8 @@ int main(void) {
   HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_SET);
 
   #ifndef VARIANT_TRANSPOTTER
-    DriveControl_Init(&driveControlState);
+    UserIntent_Init(&userIntentState);
+    DriveControl_InitLongitudinal(&driveControlLongitudinalState);
     DriveControl_ResetStallDecay(&stallDecayStateLeft);
     DriveControl_ResetStallDecay(&stallDecayStateRight);
     WheelCommandSupervisor_Init(&wheelCommandSupervisorState);
@@ -320,8 +323,9 @@ int main(void) {
   while(1) {
     if (buzzerTimer - buzzerTimer_prev > 16*DELAY_IN_MAIN_LOOP) {   // 1 ms = 16 ticks buzzerTimer
 
-    readCommand();                        // Read Command: input1[inIdx].cmd, input2[inIdx].cmd
-    calcAvgSpeed();                       // Calculate average measured speed: speedAvg, speedAvgAbs
+      /* User intent pipeline stage 1: raw input decode into user-facing command space. */
+      readCommand();                        // Read Command: input1[inIdx].cmd, input2[inIdx].cmd
+      calcAvgSpeed();                       // Calculate average measured speed: speedAvg, speedAvgAbs
 
     #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
       if (timeoutFlgADC != prevTimeoutFlgADC) {
@@ -375,7 +379,8 @@ int main(void) {
           ABS(input1[inIdx].cmd) < 50 && ABS(input2[inIdx].cmd) < 50){
         beepShort(6);                     // make 2 beeps indicating the motor enable
         beepShort(4); HAL_Delay(100);
-        DriveControl_ResetFilters(&driveControlState);
+        UserIntent_Reset(&userIntentState);
+        DriveControl_ResetLongitudinal(&driveControlLongitudinalState);
         DriveControl_ResetStallDecay(&stallDecayStateLeft);
         DriveControl_ResetStallDecay(&stallDecayStateRight);
         enable = 1;                       // enable motors
@@ -432,7 +437,8 @@ int main(void) {
       #endif
 
       // ####### LOW-PASS FILTER #######
-      DriveControl_FilterInputs(&driveControlState, input1[inIdx].cmd, input2[inIdx].cmd, rate, &steer, &speed);
+      /* User intent pipeline stage 2: expose longitudinal + steering intent without motor-domain shaping. */
+      UserIntent_BuildLongitudinalSteeringIntent(&userIntentState, input1[inIdx].cmd, input2[inIdx].cmd, &steer, &speed);
 
       // ####### VARIANT_HOVERCAR #######
       #ifdef VARIANT_HOVERCAR
@@ -453,6 +459,24 @@ int main(void) {
       }
       #endif
 
+      {
+        uint16_t longitudinalRampUpRate = (uint16_t)((((uint32_t)rate * LONG_RAMP_UP_NUM) / LONG_RAMP_UP_DEN) > 0U ? (((uint32_t)rate * LONG_RAMP_UP_NUM) / LONG_RAMP_UP_DEN) : 1U);
+        uint16_t longitudinalRampDownRate = (uint16_t)((((uint32_t)longitudinalRampUpRate * LONG_RAMP_DOWN_NUM) / LONG_RAMP_DOWN_DEN) > 0U ? (((uint32_t)longitudinalRampUpRate * LONG_RAMP_DOWN_NUM) / LONG_RAMP_DOWN_DEN) : 1U);
+
+        if (modeSupervisorState.selected_mode == TRQ_MODE) {
+          int16_t speedMaxRpm = (int16_t)(rtP_Left.n_max >> 4);
+          speed = DriveControl_BuildLongitudinalTorque(&driveControlLongitudinalState,
+                                                       speed,
+                                                       speedAvg,
+                                                       speedMaxRpm,
+                                                       longitudinalRampUpRate,
+                                                       longitudinalRampDownRate);
+        } else {
+          DriveControl_ResetLongitudinal(&driveControlLongitudinalState);
+        }
+      }
+
+      /* Torque-domain stage: intent-to-wheel torque mapping/mixing. */
       DriveControl_MixCommands(speed, steer, &cmdL, &cmdR);
 
       /* Observe raw mixed command (pre-wheel LPF/hysteresis) for boot neutral learning. */
