@@ -11,6 +11,10 @@
 
 #include "drive_control.h"
 #include "config.h"
+#include "drive_math.h"
+
+#define DRIVE_CONTROL_CMD_MAX  (1000)
+#define DRIVE_CONTROL_CMD_MIN  (-DRIVE_CONTROL_CMD_MAX)
 
 
 static int16_t DriveControl_ClampS16(int32_t value, int16_t lower, int16_t upper) {
@@ -32,12 +36,12 @@ static int16_t DriveControl_ComputeSpeedPTorque(int16_t speedRefCmd,
   int32_t speedRange;
 
   speedRange = (speedMaxRpm > 0) ? speedMaxRpm : 1;
-  vRefRpm = ((int32_t)speedRefCmd * speedRange) / INPUT_MAX;
+  vRefRpm = ((int32_t)speedRefCmd * speedRange) / DRIVE_CONTROL_CMD_MAX;
   speedErrRpm = vRefRpm - speedMeasRpm;
 
-  torqueCmd = (((int64_t)speedErrRpm * INPUT_MAX) * LONG_SPEED_KP_Q15) / ((int64_t)speedRange * 32768);
+  torqueCmd = (((int64_t)speedErrRpm * DRIVE_CONTROL_CMD_MAX) * LONG_SPEED_KP_Q15) / ((int64_t)speedRange * 32768);
 
-  return DriveControl_ClampS16(torqueCmd, INPUT_MIN, INPUT_MAX);
+  return DriveControl_ClampS16(torqueCmd, DRIVE_CONTROL_CMD_MIN, DRIVE_CONTROL_CMD_MAX);
 }
 
 static int16_t DriveControl_ApplyAsymmetricRamp(int16_t targetTorqueCmd,
