@@ -260,9 +260,9 @@ Validation:
 This section must be updated in each iteration to maintain continuity.
 
 ### Global status
-- Overall cleanup program: **Iteration 1 completed; migration in progress**.
-- Current iteration: **1 (structure prep, no behavior change) — completed**.
-- Next planned iteration: **2 (extract supervisors from `main.c`)**.
+- Overall cleanup program: **Iteration 1 closed and validated; migration in progress**.
+- Current iteration: **1 (structure prep, no behavior change) — closed**.
+- Next planned iteration: **2 (extract supervisors from `main.c`) — pending merge/start**.
 
 ### Completed so far
 - Added this architecture cleanup plan.
@@ -301,6 +301,9 @@ This section must be updated in each iteration to maintain continuity.
   - Follow-up adjustments after review:
     - Added safety-focused serial debug transition logs in `Src/main.c` for timeout assertions/clears (`timeoutFlgADC`, `timeoutFlgSerial`, `timeoutFlgGen`), control-mode changes (`ctrlModReq`), and motor enable/disable transitions.
     - Goal: make safety-relevant runtime state changes explicit on debug serial during bench/road testing.
+  - Hardware validation feedback (user test):
+    - User reported that firmware behavior is preserved on-device and previously working behavior remains intact.
+    - Iteration 1 scope is accepted/closed; repository is ready to merge this step and proceed to Iteration 2 in a later change.
   - Next step:
     - Iteration 2: move timeout/failsafe and mode arbitration logic from `main.c` into `core/supervisor/*` with behavior-preserving integration.
 
