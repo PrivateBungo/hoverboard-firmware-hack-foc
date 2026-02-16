@@ -97,9 +97,18 @@ Outputs of this path are command targets and state flags that the ISR consumes.
 - **Generated control math and state layout** are not edited directly in normal feature refactors.
 - **Integration details** (which generated globals/models are used and how) are localized in `core/control/foc_adapter.*`.
 
-### 4.2 What remains centralized (for now)
+### 4.2 Current config layering (iteration 5)
 
-- `Inc/config.h` is still the active config hub; split by concern is planned for iteration 5.
+- `Inc/config.h` remains the stable compatibility facade include for the firmware codebase.
+- The facade now composes layered config headers:
+  - `config/feature/feature_flags.h` (variant/feature selection).
+  - `config/control/control_defaults.h` (PWM/ADC/timing defaults used by control runtime).
+  - `config/board/board_default.h` (board mapping defaults).
+  - `config/user/user_params.h` (user-tunable default values).
+- Legacy config blocks that are still in `Inc/config.h` continue to function unchanged, so existing customization paths remain valid while migration proceeds.
+
+### 4.3 What remains centralized (for now)
+
 - `Src/main.c` still contains significant application logic, though supervisor/io seams are now established.
 
 ## 5. Key globals and ownership (practical view)
@@ -110,7 +119,7 @@ Outputs of this path are command targets and state flags that the ISR consumes.
 
 ## 6. Why this matters for future changes
 
-For upcoming cleanup work (especially config split and deeper module extraction), use this rule:
+For upcoming cleanup work (especially deeper module extraction), use this rule:
 
 - If a change touches generated BLDC I/O or model stepping, it should flow through `core/control/foc_adapter.*` first.
 - If a change alters high-level behavior sequencing (timeouts, mode switches, command shaping), prefer supervisor/control modules over adding new logic directly into `main.c`.

@@ -261,9 +261,9 @@ Validation:
 This section must be updated in each iteration to maintain continuity.
 
 ### Global status
-- Overall cleanup program: **Iterations 1-4 closed and validated; migration in progress**.
-- Current iteration: **4 (introduce FOC adapter boundary) — closed**.
-- Next planned iteration: **5 (config split + docs finalization) — pending merge/start**.
+- Overall cleanup program: **Iterations 1-5 closed and validated; migration complete for planned rollout**.
+- Current iteration: **5 (config split + docs finalization) — closed**.
+- Next planned iteration: **Post-rollout cleanup/hardening — pending definition**.
 
 ### Completed so far
 - Added this architecture cleanup plan.
@@ -279,12 +279,33 @@ This section must be updated in each iteration to maintain continuity.
 - Added active FOC adapter module (`core/control/foc_adapter.*`) and integrated it into the build path (iteration 4).
 - Routed generated BLDC input/output stepping in `Src/bldc.c` through the adapter boundary while preserving generated controller sources unchanged.
 - Routed `Src/main.c` runtime reads of motor speed and DC link current through adapter accessors.
+- Split core configuration layers for iteration 5 by introducing `config/feature/feature_flags.h`, `config/control/control_defaults.h`, `config/board/board_default.h`, and `config/user/user_params.h`.
+- Kept `Inc/config.h` as compatibility facade and sourced new layered headers there so existing include paths and macros remain functional.
+- Updated architecture/config documentation to reflect the active layering and compatibility path.
 
 ### Not started yet
 - No BLDC generated-file relocation has been executed yet.
-- No active macro/config split from `Inc/config.h` has been executed yet.
 
 ### Iteration log
+
+- **Iteration 5 — 2026-02-16**
+  - Scope executed:
+    - Introduced active layered config headers in `config/`:
+      - `config/feature/feature_flags.h` (variant + feature selection)
+      - `config/control/control_defaults.h` (control timing/PWM/ADC defaults)
+      - `config/board/board_default.h` (board variant selection)
+      - `config/user/user_params.h` (user-facing default tuning values)
+    - Converted `Inc/config.h` into a compatibility facade for the newly split layers by including these new headers at the top while preserving downstream legacy config blocks and validation logic.
+    - Updated `config/README.md` and `docs/architecture/README.md` with the iteration-5 config layering model and migration status.
+  - Build/check commands and results:
+    - `make clean` → passed.
+    - `make -j4` → blocked in Codex environment (`arm-none-eabi-gcc` missing).
+  - Compatibility notes:
+    - Existing firmware source files continue to include `Inc/config.h` unchanged.
+    - Macros moved into layered headers are still visible through the same compatibility include path.
+    - Legacy user customization flow remains functional while split migration continues incrementally.
+  - Next step:
+    - Optional follow-up: migrate additional thematic config sections (battery/temperature/motor-control/variant blocks) into layered headers with minimal-diff macro parity checks.
 
 - **Iteration 4 — 2026-02-16**
   - Scope executed:
