@@ -260,13 +260,22 @@ int main(void) {
 
   #ifndef VARIANT_TRANSPOTTER
     int16_t longitudinalRawCmd = 0;
-    int16_t commandFilterSteeringOut = 0;
+    int16_t longitudinalCenteredCmd = 0;
     int16_t commandFilterLongitudinalOffsetOut = 0;
+    uint8_t commandFilterLongitudinalCalibActive = 0U;
+    uint8_t commandFilterLongitudinalCalibLocked = 0U;
+    uint8_t commandFilterLongitudinalCalibUpdated = 0U;
     int16_t userIntentLongitudinalOut = 0;
     int16_t intentVelocityOut = 0;
+    int16_t intentCmdEffOut = 0;
+    int8_t intentArmedSignOut = 0;
+    int8_t intentBlockedSignOut = 0;
+    uint8_t intentNearZeroOut = 0U;
     uint8_t intentModeOut = 0U;
     uint16_t intentZeroLatchElapsedMsOut = 0U;
     uint8_t intentZeroLatchReleasedOut = 0U;
+    uint8_t intentZeroLatchArmedOut = 0U;
+    uint8_t intentZeroLatchActivatedOut = 0U;
     int16_t setpointVelocityOut = 0;
     int16_t setpointAccelerationOut = 0;
     uint8_t setpointSlipGapClampActive = 0U;
@@ -291,6 +300,8 @@ int main(void) {
     uint8_t prevCtrlModReq     = ctrlModReq;
     uint8_t prevIntentModeOut  = (uint8_t)INTENT_STATE_MACHINE_DRIVE_FORWARD;
     uint16_t prevIntentZeroLatchElapsedMsOut = 0U;
+    uint8_t prevCommandFilterLongitudinalCalibActive = 0U;
+    uint8_t prevCommandFilterLongitudinalCalibLocked = 0U;
     #ifndef VARIANT_TRANSPOTTER
       uint8_t prevStallActiveLeft  = 0U;
       uint8_t prevStallActiveRight = 0U;
@@ -474,10 +485,13 @@ int main(void) {
                               input2[inIdx].cmd,
                               &commandFilterOutput);
 
-        commandFilterSteeringOut = commandFilterOutput.steering_cmd;
         commandFilterLongitudinalOffsetOut = commandFilterOutput.longitudinal_offset;
+        commandFilterLongitudinalCalibActive = commandFilterOutput.longitudinal_calib_active;
+        commandFilterLongitudinalCalibLocked = commandFilterOutput.longitudinal_calib_locked;
+        commandFilterLongitudinalCalibUpdated = commandFilterOutput.longitudinal_calib_updated;
 
-        longitudinalRawCmd = commandFilterOutput.longitudinal_cmd;
+        longitudinalRawCmd = commandFilterOutput.longitudinal_raw;
+        longitudinalCenteredCmd = commandFilterOutput.longitudinal_cmd;
 
         /* User intent layer owns command deadband/sign hysteresis policy. */
         UserIntent_BuildLongitudinalSteeringIntent(&userIntentState,
@@ -523,9 +537,15 @@ int main(void) {
                                      &velocitySetpointLayerOutput);
 
         intentVelocityOut = intentStateMachineOutput.velocity_intent;
+        intentCmdEffOut = intentStateMachineOutput.cmd_eff;
+        intentArmedSignOut = intentStateMachineOutput.armed_sign;
+        intentBlockedSignOut = intentStateMachineOutput.blocked_sign;
+        intentNearZeroOut = intentStateMachineOutput.near_zero;
         intentModeOut = (uint8_t)intentStateMachineOutput.mode;
         intentZeroLatchElapsedMsOut = intentStateMachineOutput.zero_latch_elapsed_ms;
         intentZeroLatchReleasedOut = intentStateMachineOutput.zero_latch_released;
+        intentZeroLatchArmedOut = intentStateMachineOutput.zero_latch_armed;
+        intentZeroLatchActivatedOut = intentStateMachineOutput.zero_latch_activated;
         setpointVelocityOut = velocitySetpointLayerOutput.velocity_setpoint;
         setpointAccelerationOut = velocitySetpointLayerOutput.acceleration_setpoint;
         setpointSlipGapClampActive = velocitySetpointLayerOutput.slip_gap_clamp_active;
@@ -770,14 +790,54 @@ int main(void) {
 
     // ####### DEBUG SERIAL OUT #######
     #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
+      if (commandFilterLongitudinalCalibLocked != prevCommandFilterLongitudinalCalibLocked) {
+        printf("CmdFilter calib lock:%u rawLong:%d longOff:%d centered:%d\r\n",
+          (unsigned)commandFilterLongitudinalCalibLocked,
+          longitudinalRawCmd,
+          commandFilterLongitudinalOffsetOut,
+          longitudinalCenteredCmd);
+        prevCommandFilterLongitudinalCalibLocked = commandFilterLongitudinalCalibLocked;
+      }
+
+      if (commandFilterLongitudinalCalibActive != prevCommandFilterLongitudinalCalibActive) {
+        printf("CmdFilter calib active:%u rawLong:%d longOff:%d centered:%d\r\n",
+          (unsigned)commandFilterLongitudinalCalibActive,
+          longitudinalRawCmd,
+          commandFilterLongitudinalOffsetOut,
+          longitudinalCenteredCmd);
+        prevCommandFilterLongitudinalCalibActive = commandFilterLongitudinalCalibActive;
+      }
+
+      if (commandFilterLongitudinalCalibUpdated != 0U) {
+        printf("CmdFilter calib update rawLong:%d longOff:%d centered:%d\r\n",
+          longitudinalRawCmd,
+          commandFilterLongitudinalOffsetOut,
+          longitudinalCenteredCmd);
+      }
+
       if (intentModeOut != prevIntentModeOut) {
         printf("Intent mode transition: %u -> %u (cmd:%d speed:%d zLatchMs:%u)\r\n",
           (unsigned)prevIntentModeOut,
           (unsigned)intentModeOut,
-          userIntentLongitudinalOut,
+          intentCmdEffOut,
           speedAvg,
           (unsigned)intentZeroLatchElapsedMsOut);
         prevIntentModeOut = intentModeOut;
+      }
+
+      if (intentZeroLatchArmedOut != 0U) {
+        printf("Intent zero-latch armed sign:%d cmdEff:%d speed:%d nearZero:%u\r\n",
+          (int)intentArmedSignOut,
+          intentCmdEffOut,
+          speedAvg,
+          (unsigned)intentNearZeroOut);
+      }
+
+      if (intentZeroLatchActivatedOut != 0U) {
+        printf("Intent zero-latch active blocked:%d cmdEff:%d speed:%d\r\n",
+          (int)intentBlockedSignOut,
+          intentCmdEffOut,
+          speedAvg);
       }
 
       if (intentModeOut == (uint8_t)INTENT_STATE_MACHINE_ZERO_LATCH &&
@@ -785,14 +845,15 @@ int main(void) {
           (intentZeroLatchElapsedMsOut % 100U) == 0U) {
         printf("Intent zero-latch timer: %u ms (cmd:%d speed:%d)\r\n",
           (unsigned)intentZeroLatchElapsedMsOut,
-          userIntentLongitudinalOut,
+          intentCmdEffOut,
           speedAvg);
       }
 
       if (intentZeroLatchReleasedOut != 0U) {
-        printf("Intent zero-latch release (cmd:%d speed:%d)\r\n",
-          userIntentLongitudinalOut,
-          speedAvg);
+        printf("Intent zero-latch release (cmdEff:%d speed:%d nearZero:%u)\r\n",
+          intentCmdEffOut,
+          speedAvg,
+          (unsigned)intentNearZeroOut);
       }
       prevIntentZeroLatchElapsedMsOut = intentZeroLatchElapsedMsOut;
 
@@ -812,12 +873,18 @@ int main(void) {
       }
 
       if (main_loop_counter % DEBUG_SETPOINT_PRINT_INTERVAL_LOOPS == 0U) {
-        printf("SetpointTrace mode:%s rawLong:%d uCmd:%d filtSteer:%d longOff:%d vIntent:%d vSet:%d aSet:%d vAct:%d slip:%u zLatchMs:%u zRel:%u\r\n",
+        printf("SetpointTrace mode:%s rawLong:%d longOff:%d rawLongMinusOff:%d uCmd:%d cmdEff:%d arm:%d blk:%d nz:%u calibA:%u calibL:%u vIntent:%d vSet:%d aSet:%d vAct:%d slip:%u zLatchMs:%u zRel:%u\r\n",
           IntentModeToString((IntentStateMachineMode)intentModeOut),
           longitudinalRawCmd,
-          userIntentLongitudinalOut,
-          commandFilterSteeringOut,
           commandFilterLongitudinalOffsetOut,
+          longitudinalCenteredCmd,
+          userIntentLongitudinalOut,
+          intentCmdEffOut,
+          (int)intentArmedSignOut,
+          (int)intentBlockedSignOut,
+          (unsigned)intentNearZeroOut,
+          (unsigned)commandFilterLongitudinalCalibActive,
+          (unsigned)commandFilterLongitudinalCalibLocked,
           intentVelocityOut,
           setpointVelocityOut,
           setpointAccelerationOut,
@@ -832,11 +899,19 @@ int main(void) {
           process_debug();
         #else
           InputDecodePair inputDecodePair = InputDecode_BuildPair(input1[inIdx].raw, input2[inIdx].raw, cmdL, cmdR);
-          printf("in1:%i in2:%i rawLong:%i uCmd:%i vIntent:%i iMode:%u zLatchMs:%u zRel:%u vSp:%i aSp:%i slip:%u cmdL:%i cmdR:%i ErrL:%u ErrR:%u BatADC:%i BatV:%i TempADC:%i Temp:%i StallL_t:%u StallR_t:%u StallSup:%u CtrlMode:%u\r\n",
+          printf("in1:%i in2:%i rawLong:%i longOff:%i rawMinusOff:%i uCmd:%i cmdEff:%i arm:%d blk:%d nz:%u calibA:%u calibL:%u vIntent:%i iMode:%u zLatchMs:%u zRel:%u vSp:%i aSp:%i slip:%u cmdL:%i cmdR:%i ErrL:%u ErrR:%u BatADC:%i BatV:%i TempADC:%i Temp:%i StallL_t:%u StallR_t:%u StallSup:%u CtrlMode:%u\r\n",
             inputDecodePair.raw1,     // 1: INPUT1
             inputDecodePair.raw2,     // 2: INPUT2
             longitudinalRawCmd,
+            commandFilterLongitudinalOffsetOut,
+            longitudinalCenteredCmd,
             userIntentLongitudinalOut,
+            intentCmdEffOut,
+            (int)intentArmedSignOut,
+            (int)intentBlockedSignOut,
+            (unsigned)intentNearZeroOut,
+            (unsigned)commandFilterLongitudinalCalibActive,
+            (unsigned)commandFilterLongitudinalCalibLocked,
             intentVelocityOut,
             (unsigned)intentModeOut,
             (unsigned)intentZeroLatchElapsedMsOut,

@@ -22,15 +22,23 @@ typedef enum {
 
 typedef struct {
   IntentStateMachineMode mode;
-  IntentStateMachineMode latch_target_mode;
+  int8_t armed_sign;
+  int8_t blocked_sign;
+  uint8_t near_zero;
   uint16_t zero_latch_elapsed_ms;
 } IntentStateMachineState;
 
 typedef struct {
   int16_t velocity_intent;
+  int16_t cmd_eff;
   IntentStateMachineMode mode;
+  int8_t armed_sign;
+  int8_t blocked_sign;
+  uint8_t near_zero;
   uint16_t zero_latch_elapsed_ms;
   uint8_t zero_latch_released;
+  uint8_t zero_latch_armed;
+  uint8_t zero_latch_activated;
 } IntentStateMachineOutput;
 
 void IntentStateMachine_Init(IntentStateMachineState *state);

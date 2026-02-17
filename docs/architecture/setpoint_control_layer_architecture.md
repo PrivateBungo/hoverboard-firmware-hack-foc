@@ -73,9 +73,10 @@ Convert normalized command into sharp desired velocity intent `v_intent`.
 - User-command deadband/sign hysteresis is handled in this layer (policy): enter-active at |cmd| >= 50, return-to-zero at |cmd| <= 35.
 - Hard reverse while moving forward must not produce a synthetic brake flag.
 - Braking emerges from large `Δv` in downstream setpoint/motor-control layers.
-- `ZERO_LATCH` inhibits reverse at near-zero crossing until:
-  - speed remains in deadband for 0.5 s, or
-  - command sign reverts.
+- `ZERO_LATCH` uses directional armed→active behavior:
+  - reversal while moving arms latch (braking remains natural),
+  - latch activates only at near-zero crossing and blocks only the opposite direction,
+  - latch releases after hold time at standstill or immediately if command goes neutral/other direction.
 
 ## 5. Velocity Setpoint Control Layer (1 kHz)
 
@@ -269,6 +270,7 @@ Test gate D:
 ### 11.3 Required telemetry
 
 - `u_cmd`, validity, filter outputs.
+- `cmd_eff`, `armed_sign`, `blocked_sign`, `near_zero`, `zLatchMs`.
 - Intent state and `v_intent`.
 - `v_sp`, `a_sp`, trajectory phase flags.
 - `v_actual`, slip-gap metric, clamp active flag.
