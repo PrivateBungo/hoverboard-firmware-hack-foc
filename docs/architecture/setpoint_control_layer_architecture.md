@@ -200,6 +200,13 @@ Scope:
 - Keep legacy smoothing path for physical command shaping.
 - Log intent transitions and zero-latch timer decisions.
 
+Implementation status (current branch):
+
+- `core/control/intent_state_machine.*` now implements forward/reverse intent modes and a deterministic zero-latch handoff near standstill.
+- Hard reverse while moving now flips intent sign immediately; near-zero sign flips pass through `ZERO_LATCH` hold/release rules.
+- `Src/main.c` now feeds actual speed into the intent layer and exposes `iMode`, `zLatchMs`, and `zRel` in debug telemetry.
+- Debug serial now emits intent mode transition logs, periodic zero-latch timer logs, and release events for bench traceability.
+
 Test gate B:
 
 - Hard reverse command causes immediate intent sign change.

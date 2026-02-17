@@ -87,6 +87,12 @@ Raw Joystick Input
 This separation is intentional: user interaction policy should evolve without forcing changes in torque internals or FOC timing-critical code.
 In this architecture, deadband, hysteresis, and low-pass filtering remain in the motor-control command-shaping domain near wheel command generation.
 
+### Setpoint architecture rollout status
+
+- Step A (parity scaffolding) is complete: command filter, intent state, and velocity setpoint layers are wired in pass-through mode.
+- Step B is active: `DRIVE_FORWARD`/`DRIVE_REVERSE`/`ZERO_LATCH` intent-state behavior is enabled, with debug telemetry fields (`iMode`, `zLatchMs`, `zRel`) and transition logs for deterministic bench validation.
+- Step C (jerk/asymmetric trajectory shaping) remains intentionally pending.
+
 ### Housekeeping rules
 
 - Any significant architectural change **must** update this README.

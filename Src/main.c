@@ -249,6 +249,9 @@ int main(void) {
     int16_t longitudinalRawCmd = 0;
     int16_t commandFilterLongitudinalOut = 0;
     int16_t intentVelocityOut = 0;
+    uint8_t intentModeOut = 0U;
+    uint16_t intentZeroLatchElapsedMsOut = 0U;
+    uint8_t intentZeroLatchReleasedOut = 0U;
     int16_t setpointVelocityOut = 0;
     int16_t setpointAccelerationOut = 0;
     uint8_t setpointSlipGapClampActive = 0U;
@@ -280,6 +283,8 @@ int main(void) {
     uint8_t prevTimeoutFlgGen  = timeoutFlgGen;
     uint8_t prevEnableState    = enable;
     uint8_t prevCtrlModReq     = ctrlModReq;
+    uint8_t prevIntentModeOut  = (uint8_t)INTENT_STATE_MACHINE_DRIVE_FORWARD;
+    uint16_t prevIntentZeroLatchElapsedMsOut = 0U;
     #ifndef VARIANT_TRANSPOTTER
       uint8_t prevStallActiveLeft  = 0U;
       uint8_t prevStallActiveRight = 0U;
@@ -493,6 +498,7 @@ int main(void) {
 
         IntentStateMachine_Update(&intentStateMachineState,
                                   commandFilterOutput.longitudinal_cmd,
+                                  speedAvg,
                                   &intentStateMachineOutput);
 
         VelocitySetpointLayer_Update(&velocitySetpointLayerState,
@@ -501,6 +507,9 @@ int main(void) {
 
         commandFilterLongitudinalOut = commandFilterOutput.longitudinal_cmd;
         intentVelocityOut = intentStateMachineOutput.velocity_intent;
+        intentModeOut = (uint8_t)intentStateMachineOutput.mode;
+        intentZeroLatchElapsedMsOut = intentStateMachineOutput.zero_latch_elapsed_ms;
+        intentZeroLatchReleasedOut = intentStateMachineOutput.zero_latch_released;
         setpointVelocityOut = velocitySetpointLayerOutput.velocity_setpoint;
         setpointAccelerationOut = velocitySetpointLayerOutput.acceleration_setpoint;
         setpointSlipGapClampActive = velocitySetpointLayerOutput.slip_gap_clamp_active;
@@ -822,6 +831,32 @@ int main(void) {
 
     // ####### DEBUG SERIAL OUT #######
     #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
+      if (intentModeOut != prevIntentModeOut) {
+        printf("Intent mode transition: %u -> %u (cmd:%d speed:%d zLatchMs:%u)\r\n",
+          (unsigned)prevIntentModeOut,
+          (unsigned)intentModeOut,
+          commandFilterLongitudinalOut,
+          speedAvg,
+          (unsigned)intentZeroLatchElapsedMsOut);
+        prevIntentModeOut = intentModeOut;
+      }
+
+      if (intentModeOut == (uint8_t)INTENT_STATE_MACHINE_ZERO_LATCH &&
+          intentZeroLatchElapsedMsOut != prevIntentZeroLatchElapsedMsOut &&
+          (intentZeroLatchElapsedMsOut % 100U) == 0U) {
+        printf("Intent zero-latch timer: %u ms (cmd:%d speed:%d)\r\n",
+          (unsigned)intentZeroLatchElapsedMsOut,
+          commandFilterLongitudinalOut,
+          speedAvg);
+      }
+
+      if (intentZeroLatchReleasedOut != 0U) {
+        printf("Intent zero-latch release (cmd:%d speed:%d)\r\n",
+          commandFilterLongitudinalOut,
+          speedAvg);
+      }
+      prevIntentZeroLatchElapsedMsOut = intentZeroLatchElapsedMsOut;
+
       if (g_errCodeLeftEffective != prevLeftErrCode || g_errCodeRightEffective != prevRightErrCode) {
         printf("MotorErr L:%u[b0:%u b1:%u b2:%u] R:%u[b0:%u b1:%u b2:%u]\r\n",
           g_errCodeLeftEffective,
@@ -842,12 +877,15 @@ int main(void) {
           process_debug();
         #else
           InputDecodePair inputDecodePair = InputDecode_BuildPair(input1[inIdx].raw, input2[inIdx].raw, cmdL, cmdR);
-          printf("in1:%i in2:%i rawLong:%i filtLong:%i vIntent:%i vSp:%i aSp:%i slip:%u cmdL:%i cmdR:%i ErrL:%u ErrR:%u BatADC:%i BatV:%i TempADC:%i Temp:%i StallL_t:%u StallR_t:%u StallSup:%u CtrlMode:%u\r\n",
+          printf("in1:%i in2:%i rawLong:%i filtLong:%i vIntent:%i iMode:%u zLatchMs:%u zRel:%u vSp:%i aSp:%i slip:%u cmdL:%i cmdR:%i ErrL:%u ErrR:%u BatADC:%i BatV:%i TempADC:%i Temp:%i StallL_t:%u StallR_t:%u StallSup:%u CtrlMode:%u\r\n",
             inputDecodePair.raw1,     // 1: INPUT1
             inputDecodePair.raw2,     // 2: INPUT2
             longitudinalRawCmd,
             commandFilterLongitudinalOut,
             intentVelocityOut,
+            (unsigned)intentModeOut,
+            (unsigned)intentZeroLatchElapsedMsOut,
+            (unsigned)intentZeroLatchReleasedOut,
             setpointVelocityOut,
             setpointAccelerationOut,
             (unsigned)setpointSlipGapClampActive,
