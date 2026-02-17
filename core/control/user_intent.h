@@ -15,7 +15,8 @@
 #include <stdint.h>
 
 typedef struct {
-  uint8_t reserved;
+  uint8_t steering_active;
+  uint8_t longitudinal_active;
 } UserIntentState;
 
 void UserIntent_Init(UserIntentState *state);

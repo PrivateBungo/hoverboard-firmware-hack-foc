@@ -6,8 +6,6 @@
 typedef struct {
   int32_t leftFiltFixdt;
   int32_t rightFiltFixdt;
-  uint8_t leftDriveEnabled;
-  uint8_t rightDriveEnabled;
 } WheelCommandSupervisorState;
 
 void WheelCommandSupervisor_Init(WheelCommandSupervisorState *state);

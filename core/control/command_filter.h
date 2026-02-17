@@ -15,12 +15,19 @@
 #include <stdint.h>
 
 typedef struct {
-  uint8_t reserved;
+  int16_t steering_offset;
+  int16_t longitudinal_offset;
+  int16_t steering_stable_ref;
+  int16_t longitudinal_stable_ref;
+  uint16_t steering_stable_count;
+  uint16_t longitudinal_stable_count;
 } CommandFilterState;
 
 typedef struct {
   int16_t steering_cmd;
   int16_t longitudinal_cmd;
+  int16_t steering_offset;
+  int16_t longitudinal_offset;
 } CommandFilterOutput;
 
 void CommandFilter_Init(CommandFilterState *state);

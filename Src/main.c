@@ -39,7 +39,6 @@
 #include "mode_supervisor.h"
 #include "stall_supervisor.h"
 #include "wheel_command_supervisor.h"
-#include "boot_neutral_supervisor.h"
 #include "uart_reporting.h"
 #include "input_decode.h"
 #include "foc_adapter.h"
@@ -260,11 +259,10 @@ int main(void) {
   #endif
 
   #ifndef VARIANT_TRANSPOTTER
-    BootNeutralSupervisorState bootNeutralSupervisorState;
-    int16_t cmdL_observe = 0;
-    int16_t cmdR_observe = 0;
     int16_t longitudinalRawCmd = 0;
-    int16_t commandFilterLongitudinalOut = 0;
+    int16_t commandFilterSteeringOut = 0;
+    int16_t commandFilterLongitudinalOffsetOut = 0;
+    int16_t userIntentLongitudinalOut = 0;
     int16_t intentVelocityOut = 0;
     uint8_t intentModeOut = 0U;
     uint16_t intentZeroLatchElapsedMsOut = 0U;
@@ -272,17 +270,8 @@ int main(void) {
     int16_t setpointVelocityOut = 0;
     int16_t setpointAccelerationOut = 0;
     uint8_t setpointSlipGapClampActive = 0U;
-    int16_t cmdL_filt = 0;
-    int16_t cmdR_filt = 0;
     int16_t cmdL_adj = 0;
     int16_t cmdR_adj = 0;
-    uint8_t bootNeutralForceZeroPwm = 0U;
-    #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
-      uint32_t bootNeutralDebugLastPrintMs = 0U;
-      BootNeutralSupervisorPhase bootNeutralPrevPhase = BOOT_NEUTRAL_STATE_OBSERVE;
-    #endif
-
-    BootNeutralSupervisor_Init(&bootNeutralSupervisorState, HAL_GetTick());
   #endif
 
   #if defined(FEEDBACK_SERIAL_USART2) || defined(FEEDBACK_SERIAL_USART3)
@@ -476,11 +465,28 @@ int main(void) {
         }
       #endif
 
-      // ####### LOW-PASS FILTER #######
-      /* User intent pipeline stage 2: expose longitudinal + steering intent without motor-domain shaping. */
-      UserIntent_BuildLongitudinalSteeringIntent(&userIntentState, input1[inIdx].cmd, input2[inIdx].cmd, &steer, &speed);
+      // ####### COMMAND FILTER + USER INTENT #######
+      {
+        CommandFilterOutput commandFilterOutput;
 
-      longitudinalRawCmd = speed;
+        CommandFilter_Process(&commandFilterState,
+                              input1[inIdx].cmd,
+                              input2[inIdx].cmd,
+                              &commandFilterOutput);
+
+        commandFilterSteeringOut = commandFilterOutput.steering_cmd;
+        commandFilterLongitudinalOffsetOut = commandFilterOutput.longitudinal_offset;
+
+        longitudinalRawCmd = commandFilterOutput.longitudinal_cmd;
+
+        /* User intent layer owns command deadband/sign hysteresis policy. */
+        UserIntent_BuildLongitudinalSteeringIntent(&userIntentState,
+                                                   commandFilterOutput.steering_cmd,
+                                                   commandFilterOutput.longitudinal_cmd,
+                                                   &steer,
+                                                   &speed);
+        userIntentLongitudinalOut = speed;
+      }
 
       // ####### VARIANT_HOVERCAR #######
       #ifdef VARIANT_HOVERCAR
@@ -501,20 +507,14 @@ int main(void) {
       }
       #endif
 
+      userIntentLongitudinalOut = speed;
+
       {
-        CommandFilterOutput commandFilterOutput;
         IntentStateMachineOutput intentStateMachineOutput;
         VelocitySetpointLayerOutput velocitySetpointLayerOutput;
 
-        CommandFilter_Process(&commandFilterState,
-                              steer,
-                              speed,
-                              &commandFilterOutput);
-
-        steer = commandFilterOutput.steering_cmd;
-
         IntentStateMachine_Update(&intentStateMachineState,
-                                  commandFilterOutput.longitudinal_cmd,
+                                  speed,
                                   speedAvg,
                                   &intentStateMachineOutput);
 
@@ -522,7 +522,6 @@ int main(void) {
                                      intentStateMachineOutput.velocity_intent,
                                      &velocitySetpointLayerOutput);
 
-        commandFilterLongitudinalOut = commandFilterOutput.longitudinal_cmd;
         intentVelocityOut = intentStateMachineOutput.velocity_intent;
         intentModeOut = (uint8_t)intentStateMachineOutput.mode;
         intentZeroLatchElapsedMsOut = intentStateMachineOutput.zero_latch_elapsed_ms;
@@ -553,29 +552,11 @@ int main(void) {
       /* Torque-domain stage: intent-to-wheel torque mapping/mixing. */
       DriveControl_MixCommands(speed, steer, &cmdL, &cmdR);
 
-      /* Observe raw mixed command (pre-wheel LPF/hysteresis) for boot neutral learning. */
-      cmdL_observe = cmdL;
-      cmdR_observe = cmdR;
-
       WheelCommandSupervisor_Update(&wheelCommandSupervisorState, cmdL, cmdR, &cmdL, &cmdR);
 
-      /* Runtime command path to motors remains post wheel LPF + hysteresis. */
-      cmdL_filt = cmdL;
-      cmdR_filt = cmdR;
 
-      BootNeutralSupervisor_Update(&bootNeutralSupervisorState,
-                                   HAL_GetTick(),
-                                   (uint8_t)(timeoutFlgGen == 0U),
-                                   cmdL_observe,
-                                   cmdR_observe,
-                                   cmdL_filt,
-                                   cmdR_filt,
-                                   &cmdL_adj,
-                                   &cmdR_adj,
-                                   &bootNeutralForceZeroPwm);
-
-      cmdL = cmdL_adj;
-      cmdR = cmdR_adj;
+      cmdL_adj = cmdL;
+      cmdR_adj = cmdR;
 
       DriveControl_MapCommandsToPwm(cmdL_adj, cmdR_adj, &pwml, &pwmr);
 
@@ -662,65 +643,6 @@ int main(void) {
         }
       }
 
-      /* Gate only final PWM during OBSERVE; learning still sees ungated cmd*_filt. */
-      if (bootNeutralForceZeroPwm != 0U) {
-        pwml = 0;
-        pwmr = 0;
-      }
-
-      #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
-      {
-        uint32_t nowMs = HAL_GetTick();
-        uint32_t bootNeutralElapsedMs = BootNeutralSupervisor_ElapsedMs(&bootNeutralSupervisorState, nowMs);
-
-        BootNeutralSupervisorPhase bootNeutralPhase = BootNeutralSupervisor_GetPhase(&bootNeutralSupervisorState);
-
-        if (bootNeutralPhase != bootNeutralPrevPhase) {
-          printf("BootNeutral transition %u->%u decision:%u learn:%u rcAll:%u abort:%u n:%lu maxAbs:(%i,%i) sum:(%ld,%ld) neutral:(%i,%i)\r\n",
-            (unsigned)bootNeutralPrevPhase,
-            (unsigned)bootNeutralPhase,
-            (unsigned)BootNeutralSupervisor_GetDecision(&bootNeutralSupervisorState),
-            (unsigned)BootNeutralSupervisor_WasLearningApplied(&bootNeutralSupervisorState),
-            (unsigned)BootNeutralSupervisor_GetRcPresentAllWindow(&bootNeutralSupervisorState),
-            (unsigned)BootNeutralSupervisor_GetAbortFlag(&bootNeutralSupervisorState),
-            (unsigned long)BootNeutralSupervisor_GetSampleCount(&bootNeutralSupervisorState),
-            BootNeutralSupervisor_GetObserveMaxAbsL(&bootNeutralSupervisorState),
-            BootNeutralSupervisor_GetObserveMaxAbsR(&bootNeutralSupervisorState),
-            (long)BootNeutralSupervisor_GetSumL(&bootNeutralSupervisorState),
-            (long)BootNeutralSupervisor_GetSumR(&bootNeutralSupervisorState),
-            BootNeutralSupervisor_GetNeutralL(&bootNeutralSupervisorState),
-            BootNeutralSupervisor_GetNeutralR(&bootNeutralSupervisorState));
-          bootNeutralPrevPhase = bootNeutralPhase;
-        }
-
-        if ((bootNeutralElapsedMs <= 3000U) && ((nowMs - bootNeutralDebugLastPrintMs) >= 200U)) {
-          uint8_t rcPresent = (timeoutFlgGen == 0U);
-
-          printf("BootNeutral st:%u el:%lu rc:%u rcAll:%u abort:%u decision:%u force0:%u n:%lu maxAbs:(%i,%i) cmdObs:(%i,%i) cmdF:(%i,%i) neutral:(%i,%i) cmdA:(%i,%i) pwm:(%i,%i)\r\n",
-            (unsigned)bootNeutralPhase,
-            (unsigned long)bootNeutralElapsedMs,
-            (unsigned)rcPresent,
-            (unsigned)BootNeutralSupervisor_GetRcPresentAllWindow(&bootNeutralSupervisorState),
-            (unsigned)BootNeutralSupervisor_GetAbortFlag(&bootNeutralSupervisorState),
-            (unsigned)BootNeutralSupervisor_GetDecision(&bootNeutralSupervisorState),
-            (unsigned)bootNeutralForceZeroPwm,
-            (unsigned long)BootNeutralSupervisor_GetSampleCount(&bootNeutralSupervisorState),
-            BootNeutralSupervisor_GetObserveMaxAbsL(&bootNeutralSupervisorState),
-            BootNeutralSupervisor_GetObserveMaxAbsR(&bootNeutralSupervisorState),
-            cmdL_observe,
-            cmdR_observe,
-            cmdL_filt,
-            cmdR_filt,
-            BootNeutralSupervisor_GetNeutralL(&bootNeutralSupervisorState),
-            BootNeutralSupervisor_GetNeutralR(&bootNeutralSupervisorState),
-            cmdL_adj,
-            cmdR_adj,
-            (int16_t)pwml,
-            (int16_t)pwmr);
-          bootNeutralDebugLastPrintMs = nowMs;
-        }
-      }
-      #endif
     #endif
 
     #ifdef VARIANT_TRANSPOTTER
@@ -852,7 +774,7 @@ int main(void) {
         printf("Intent mode transition: %u -> %u (cmd:%d speed:%d zLatchMs:%u)\r\n",
           (unsigned)prevIntentModeOut,
           (unsigned)intentModeOut,
-          commandFilterLongitudinalOut,
+          userIntentLongitudinalOut,
           speedAvg,
           (unsigned)intentZeroLatchElapsedMsOut);
         prevIntentModeOut = intentModeOut;
@@ -863,13 +785,13 @@ int main(void) {
           (intentZeroLatchElapsedMsOut % 100U) == 0U) {
         printf("Intent zero-latch timer: %u ms (cmd:%d speed:%d)\r\n",
           (unsigned)intentZeroLatchElapsedMsOut,
-          commandFilterLongitudinalOut,
+          userIntentLongitudinalOut,
           speedAvg);
       }
 
       if (intentZeroLatchReleasedOut != 0U) {
         printf("Intent zero-latch release (cmd:%d speed:%d)\r\n",
-          commandFilterLongitudinalOut,
+          userIntentLongitudinalOut,
           speedAvg);
       }
       prevIntentZeroLatchElapsedMsOut = intentZeroLatchElapsedMsOut;
@@ -890,10 +812,12 @@ int main(void) {
       }
 
       if (main_loop_counter % DEBUG_SETPOINT_PRINT_INTERVAL_LOOPS == 0U) {
-        printf("SetpointTrace mode:%s rawLong:%d filtLong:%d vIntent:%d vSet:%d aSet:%d vAct:%d slip:%u zLatchMs:%u zRel:%u\r\n",
+        printf("SetpointTrace mode:%s rawLong:%d uCmd:%d filtSteer:%d longOff:%d vIntent:%d vSet:%d aSet:%d vAct:%d slip:%u zLatchMs:%u zRel:%u\r\n",
           IntentModeToString((IntentStateMachineMode)intentModeOut),
           longitudinalRawCmd,
-          commandFilterLongitudinalOut,
+          userIntentLongitudinalOut,
+          commandFilterSteeringOut,
+          commandFilterLongitudinalOffsetOut,
           intentVelocityOut,
           setpointVelocityOut,
           setpointAccelerationOut,
@@ -908,11 +832,11 @@ int main(void) {
           process_debug();
         #else
           InputDecodePair inputDecodePair = InputDecode_BuildPair(input1[inIdx].raw, input2[inIdx].raw, cmdL, cmdR);
-          printf("in1:%i in2:%i rawLong:%i filtLong:%i vIntent:%i iMode:%u zLatchMs:%u zRel:%u vSp:%i aSp:%i slip:%u cmdL:%i cmdR:%i ErrL:%u ErrR:%u BatADC:%i BatV:%i TempADC:%i Temp:%i StallL_t:%u StallR_t:%u StallSup:%u CtrlMode:%u\r\n",
+          printf("in1:%i in2:%i rawLong:%i uCmd:%i vIntent:%i iMode:%u zLatchMs:%u zRel:%u vSp:%i aSp:%i slip:%u cmdL:%i cmdR:%i ErrL:%u ErrR:%u BatADC:%i BatV:%i TempADC:%i Temp:%i StallL_t:%u StallR_t:%u StallSup:%u CtrlMode:%u\r\n",
             inputDecodePair.raw1,     // 1: INPUT1
             inputDecodePair.raw2,     // 2: INPUT2
             longitudinalRawCmd,
-            commandFilterLongitudinalOut,
+            userIntentLongitudinalOut,
             intentVelocityOut,
             (unsigned)intentModeOut,
             (unsigned)intentZeroLatchElapsedMsOut,
