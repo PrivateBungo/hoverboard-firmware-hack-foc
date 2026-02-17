@@ -50,6 +50,23 @@
 
 void SystemClock_Config(void);
 
+#if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
+#define DEBUG_SETPOINT_PRINT_INTERVAL_LOOPS  40U  // ~200 ms at 5 ms loop
+
+static const char *IntentModeToString(IntentStateMachineMode mode) {
+  switch (mode) {
+    case INTENT_STATE_MACHINE_DRIVE_FORWARD:
+      return "FWD";
+    case INTENT_STATE_MACHINE_DRIVE_REVERSE:
+      return "REV";
+    case INTENT_STATE_MACHINE_ZERO_LATCH:
+      return "ZL";
+    default:
+      return "UNK";
+  }
+}
+#endif
+
 //------------------------------------------------------------------------
 // Global variables set externally
 //------------------------------------------------------------------------
@@ -870,6 +887,20 @@ int main(void) {
 
         prevLeftErrCode  = g_errCodeLeftEffective;
         prevRightErrCode = g_errCodeRightEffective;
+      }
+
+      if (main_loop_counter % DEBUG_SETPOINT_PRINT_INTERVAL_LOOPS == 0U) {
+        printf("SetpointTrace mode:%s rawLong:%d filtLong:%d vIntent:%d vSet:%d aSet:%d vAct:%d slip:%u zLatchMs:%u zRel:%u\r\n",
+          IntentModeToString((IntentStateMachineMode)intentModeOut),
+          longitudinalRawCmd,
+          commandFilterLongitudinalOut,
+          intentVelocityOut,
+          setpointVelocityOut,
+          setpointAccelerationOut,
+          speedAvg,
+          (unsigned)setpointSlipGapClampActive,
+          (unsigned)intentZeroLatchElapsedMsOut,
+          (unsigned)intentZeroLatchReleasedOut);
       }
 
       if (main_loop_counter % DEBUG_INPUT_PRINT_INTERVAL_LOOPS == 0) {    // Send data periodically every ~5 s
