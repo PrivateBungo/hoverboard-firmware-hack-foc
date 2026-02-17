@@ -31,7 +31,10 @@
 #include "rtwtypes.h"
 #include "comms.h"
 #include "drive_control.h"
+#include "command_filter.h"
+#include "intent_state_machine.h"
 #include "user_intent.h"
+#include "velocity_setpoint_layer.h"
 #include "input_supervisor.h"
 #include "mode_supervisor.h"
 #include "stall_supervisor.h"
@@ -152,6 +155,9 @@ static int16_t    speed;                // local variable for speed. -1000 to 10
 #ifndef VARIANT_TRANSPOTTER
   static int16_t  steer;                // local variable for steering. -1000 to 1000
   static UserIntentState userIntentState;
+  static CommandFilterState commandFilterState;
+  static IntentStateMachineState intentStateMachineState;
+  static VelocitySetpointLayerState velocitySetpointLayerState;
   static DriveControlLongitudinalState driveControlLongitudinalState;
   static DriveControlStallDecayState stallDecayStateLeft;
   static DriveControlStallDecayState stallDecayStateRight;
@@ -224,6 +230,9 @@ int main(void) {
 
   #ifndef VARIANT_TRANSPOTTER
     UserIntent_Init(&userIntentState);
+    CommandFilter_Init(&commandFilterState);
+    IntentStateMachine_Init(&intentStateMachineState);
+    VelocitySetpointLayer_Init(&velocitySetpointLayerState);
     DriveControl_InitLongitudinal(&driveControlLongitudinalState);
     DriveControl_ResetStallDecay(&stallDecayStateLeft);
     DriveControl_ResetStallDecay(&stallDecayStateRight);
@@ -237,6 +246,12 @@ int main(void) {
     BootNeutralSupervisorState bootNeutralSupervisorState;
     int16_t cmdL_observe = 0;
     int16_t cmdR_observe = 0;
+    int16_t longitudinalRawCmd = 0;
+    int16_t commandFilterLongitudinalOut = 0;
+    int16_t intentVelocityOut = 0;
+    int16_t setpointVelocityOut = 0;
+    int16_t setpointAccelerationOut = 0;
+    uint8_t setpointSlipGapClampActive = 0U;
     int16_t cmdL_filt = 0;
     int16_t cmdR_filt = 0;
     int16_t cmdL_adj = 0;
@@ -380,6 +395,9 @@ int main(void) {
         beepShort(6);                     // make 2 beeps indicating the motor enable
         beepShort(4); HAL_Delay(100);
         UserIntent_Reset(&userIntentState);
+        CommandFilter_Reset(&commandFilterState);
+        IntentStateMachine_Reset(&intentStateMachineState);
+        VelocitySetpointLayer_Reset(&velocitySetpointLayerState);
         DriveControl_ResetLongitudinal(&driveControlLongitudinalState);
         DriveControl_ResetStallDecay(&stallDecayStateLeft);
         DriveControl_ResetStallDecay(&stallDecayStateRight);
@@ -440,6 +458,8 @@ int main(void) {
       /* User intent pipeline stage 2: expose longitudinal + steering intent without motor-domain shaping. */
       UserIntent_BuildLongitudinalSteeringIntent(&userIntentState, input1[inIdx].cmd, input2[inIdx].cmd, &steer, &speed);
 
+      longitudinalRawCmd = speed;
+
       // ####### VARIANT_HOVERCAR #######
       #ifdef VARIANT_HOVERCAR
       if (inIdx == CONTROL_ADC) {               // Only use use implementation below if pedals are in use (ADC input)
@@ -458,6 +478,34 @@ int main(void) {
         steer = 0;                              // Do not apply steering to avoid side effects if STEER_COEFFICIENT is NOT 0
       }
       #endif
+
+      {
+        CommandFilterOutput commandFilterOutput;
+        IntentStateMachineOutput intentStateMachineOutput;
+        VelocitySetpointLayerOutput velocitySetpointLayerOutput;
+
+        CommandFilter_Process(&commandFilterState,
+                              steer,
+                              speed,
+                              &commandFilterOutput);
+
+        steer = commandFilterOutput.steering_cmd;
+
+        IntentStateMachine_Update(&intentStateMachineState,
+                                  commandFilterOutput.longitudinal_cmd,
+                                  &intentStateMachineOutput);
+
+        VelocitySetpointLayer_Update(&velocitySetpointLayerState,
+                                     intentStateMachineOutput.velocity_intent,
+                                     &velocitySetpointLayerOutput);
+
+        commandFilterLongitudinalOut = commandFilterOutput.longitudinal_cmd;
+        intentVelocityOut = intentStateMachineOutput.velocity_intent;
+        setpointVelocityOut = velocitySetpointLayerOutput.velocity_setpoint;
+        setpointAccelerationOut = velocitySetpointLayerOutput.acceleration_setpoint;
+        setpointSlipGapClampActive = velocitySetpointLayerOutput.slip_gap_clamp_active;
+        speed = velocitySetpointLayerOutput.velocity_setpoint;
+      }
 
       {
         uint16_t longitudinalRampUpRate = (uint16_t)((((uint32_t)rate * LONG_RAMP_UP_NUM) / LONG_RAMP_UP_DEN) > 0U ? (((uint32_t)rate * LONG_RAMP_UP_NUM) / LONG_RAMP_UP_DEN) : 1U);
@@ -794,11 +842,17 @@ int main(void) {
           process_debug();
         #else
           InputDecodePair inputDecodePair = InputDecode_BuildPair(input1[inIdx].raw, input2[inIdx].raw, cmdL, cmdR);
-          printf("in1:%i in2:%i cmdL:%i cmdR:%i ErrL:%u ErrR:%u BatADC:%i BatV:%i TempADC:%i Temp:%i StallL_t:%u StallR_t:%u StallSup:%u CtrlMode:%u\r\n",
+          printf("in1:%i in2:%i rawLong:%i filtLong:%i vIntent:%i vSp:%i aSp:%i slip:%u cmdL:%i cmdR:%i ErrL:%u ErrR:%u BatADC:%i BatV:%i TempADC:%i Temp:%i StallL_t:%u StallR_t:%u StallSup:%u CtrlMode:%u\r\n",
             inputDecodePair.raw1,     // 1: INPUT1
             inputDecodePair.raw2,     // 2: INPUT2
-            inputDecodePair.cmd1,     // 3: output command: [-1000, 1000]
-            inputDecodePair.cmd2,     // 4: output command: [-1000, 1000]
+            longitudinalRawCmd,
+            commandFilterLongitudinalOut,
+            intentVelocityOut,
+            setpointVelocityOut,
+            setpointAccelerationOut,
+            (unsigned)setpointSlipGapClampActive,
+            inputDecodePair.cmd1,
+            inputDecodePair.cmd2,
             g_errCodeLeftEffective,       // 5: left motor error code flags
             g_errCodeRightEffective,      // 6: right motor error code flags
             adc_buffer.batt1,         // 7: for battery voltage calibration
