@@ -180,6 +180,12 @@ Scope:
 - Wire them in pass-through mode so effective behavior still matches current path.
 - Add telemetry channels for current path outputs and proposed new-layer outputs side-by-side.
 
+Implementation status (current branch):
+
+- `core/control/command_filter.*`, `core/control/intent_state_machine.*`, and `core/control/velocity_setpoint_layer.*` were added as pass-through scaffolding modules.
+- `Src/main.c` now wires these modules in the command path while preserving existing behavior (pass-through velocity setpoint).
+- Debug telemetry now prints `rawLong`, `filtLong`, `vIntent`, `vSp`, `aSp`, and `slip` alongside existing command/error fields for side-by-side parity checks.
+
 Test gate A (must pass before Phase B):
 
 - Build/flash/runtime sanity.
