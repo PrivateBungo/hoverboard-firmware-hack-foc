@@ -2,6 +2,11 @@
 
 This document explains how the current firmware implementation is organized and how control/data move through it at runtime. It is intended as a practical architecture reference for engineering discussions.
 
+Additional architecture design docs:
+
+- `docs/architecture/setpoint_control_layer_architecture.md`: target layering and iterative implementation plan for the setpoint-control-focused command path.
+- Legacy completed proposal moved to recycle bin: `docs/recycle/torque_mode_accel_and_steering_architecture.md`.
+
 ## 1. System intent and runtime model
 
 The firmware runs a dual-motor controller on STM32F103 hardware. The runtime has two dominant execution domains:
