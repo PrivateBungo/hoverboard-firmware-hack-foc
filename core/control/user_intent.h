@@ -15,7 +15,8 @@
 #include <stdint.h>
 
 typedef struct {
-  uint8_t reserved;
+  int32_t steeringFiltFixdt;
+  int32_t longitudinalFiltFixdt;
 } UserIntentState;
 
 void UserIntent_Init(UserIntentState *state);

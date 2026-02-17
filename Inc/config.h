@@ -123,6 +123,13 @@
 // #define ELECTRIC_BRAKE_MAX    100       // (0, 500) Maximum electric brake to be applied when input torque request is 0 (pedal fully released).
 // #define ELECTRIC_BRAKE_THRES  120       // (0, 500) Threshold below at which the electric brake starts engaging.
 
+// User intent shaping (input-domain, pre torque mapping)
+#define USER_INTENT_INPUT_FILTER_COEF         42000     // [-] fixdt(0,16,16) LPF coefficient for input jitter suppression; higher than wheel-domain LPF for responsive feel
+#define USER_INTENT_ZERO_DEADBAND             40        // [-] filtered longitudinal deadband around neutral where release-to-zero braking logic is enabled
+#define USER_INTENT_ZERO_RELEASE_STEER_THRESH 60        // [-] minimum filtered steering request required to apply aggressive zero-release steering
+#define USER_INTENT_ZERO_RELEASE_STEER_GAIN_NUM 5       // [-] steering boost numerator when longitudinal command is released to zero (5/2 = 2.5x)
+#define USER_INTENT_ZERO_RELEASE_STEER_GAIN_DEN 2       // [-] steering boost denominator when longitudinal command is released to zero
+
 // Longitudinal speed-intent to torque-request mapping (TRQ mode)
 #define LONG_SPEED_KP_Q15        32768     // [-] fixdt(1,16,15) proportional gain from speed error to torque request
 #define LONG_RAMP_UP_NUM         6         // [-] numerator for up-ramp scaling vs RATE (6/5 => +20% faster than current)
