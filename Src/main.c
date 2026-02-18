@@ -265,6 +265,7 @@ int main(void) {
     uint8_t commandFilterLongitudinalCalibActive = 0U;
     uint8_t commandFilterLongitudinalCalibLocked = 0U;
     uint8_t commandFilterLongitudinalCalibUpdated = 0U;
+    uint8_t commandFilterLongitudinalCalibInhibitTorque = 0U;
     int16_t userIntentLongitudinalOut = 0;
     int16_t intentVelocityOut = 0;
     int16_t intentCmdEffOut = 0;
@@ -302,6 +303,7 @@ int main(void) {
     uint16_t prevIntentZeroLatchElapsedMsOut = 0U;
     uint8_t prevCommandFilterLongitudinalCalibActive = 0U;
     uint8_t prevCommandFilterLongitudinalCalibLocked = 0U;
+    uint8_t prevCommandFilterLongitudinalCalibInhibitTorque = 0U;
     #ifndef VARIANT_TRANSPOTTER
       uint8_t prevStallActiveLeft  = 0U;
       uint8_t prevStallActiveRight = 0U;
@@ -489,6 +491,7 @@ int main(void) {
         commandFilterLongitudinalCalibActive = commandFilterOutput.longitudinal_calib_active;
         commandFilterLongitudinalCalibLocked = commandFilterOutput.longitudinal_calib_locked;
         commandFilterLongitudinalCalibUpdated = commandFilterOutput.longitudinal_calib_updated;
+        commandFilterLongitudinalCalibInhibitTorque = commandFilterOutput.longitudinal_calib_inhibit_torque;
 
         longitudinalRawCmd = commandFilterOutput.longitudinal_raw;
         longitudinalCenteredCmd = commandFilterOutput.longitudinal_cmd;
@@ -523,6 +526,19 @@ int main(void) {
 
       userIntentLongitudinalOut = speed;
 
+      if (commandFilterLongitudinalCalibInhibitTorque != 0U) {
+        /* Safety latch: suppress torque while boot-time neutral calibration is in progress. */
+        steer = 0;
+        speed = 0;
+        UserIntent_Reset(&userIntentState);
+        IntentStateMachine_Reset(&intentStateMachineState);
+        VelocitySetpointLayer_Reset(&velocitySetpointLayerState);
+        DriveControl_ResetLongitudinal(&driveControlLongitudinalState);
+        DriveControl_ResetStallDecay(&stallDecayStateLeft);
+        DriveControl_ResetStallDecay(&stallDecayStateRight);
+        WheelCommandSupervisor_Init(&wheelCommandSupervisorState);
+      }
+
       {
         IntentStateMachineOutput intentStateMachineOutput;
         VelocitySetpointLayerOutput velocitySetpointLayerOutput;
@@ -534,6 +550,7 @@ int main(void) {
 
         VelocitySetpointLayer_Update(&velocitySetpointLayerState,
                                      intentStateMachineOutput.velocity_intent,
+                                     speedAvg,
                                      &velocitySetpointLayerOutput);
 
         intentVelocityOut = intentStateMachineOutput.velocity_intent;
@@ -799,6 +816,15 @@ int main(void) {
         prevCommandFilterLongitudinalCalibLocked = commandFilterLongitudinalCalibLocked;
       }
 
+      if (commandFilterLongitudinalCalibInhibitTorque != prevCommandFilterLongitudinalCalibInhibitTorque) {
+        printf("CmdFilter torque inhibit:%u rawLong:%d longOff:%d centered:%d\r\n",
+          (unsigned)commandFilterLongitudinalCalibInhibitTorque,
+          longitudinalRawCmd,
+          commandFilterLongitudinalOffsetOut,
+          longitudinalCenteredCmd);
+        prevCommandFilterLongitudinalCalibInhibitTorque = commandFilterLongitudinalCalibInhibitTorque;
+      }
+
       if (commandFilterLongitudinalCalibActive != prevCommandFilterLongitudinalCalibActive) {
         printf("CmdFilter calib active:%u rawLong:%d longOff:%d centered:%d\r\n",
           (unsigned)commandFilterLongitudinalCalibActive,
@@ -873,7 +899,7 @@ int main(void) {
       }
 
       if (main_loop_counter % DEBUG_SETPOINT_PRINT_INTERVAL_LOOPS == 0U) {
-        printf("SetpointTrace mode:%s rawLong:%d longOff:%d rawLongMinusOff:%d uCmd:%d cmdEff:%d arm:%d blk:%d nz:%u calibA:%u calibL:%u vIntent:%d vSet:%d aSet:%d vAct:%d slip:%u zLatchMs:%u zRel:%u\r\n",
+        printf("SetpointTrace mode:%s rawLong:%d longOff:%d rawLongMinusOff:%d uCmd:%d cmdEff:%d arm:%d blk:%d nz:%u calibA:%u calibL:%u calibI:%u vIntent:%d vSet:%d aSet:%d vAct:%d slip:%u zLatchMs:%u zRel:%u\r\n",
           IntentModeToString((IntentStateMachineMode)intentModeOut),
           longitudinalRawCmd,
           commandFilterLongitudinalOffsetOut,
@@ -885,6 +911,7 @@ int main(void) {
           (unsigned)intentNearZeroOut,
           (unsigned)commandFilterLongitudinalCalibActive,
           (unsigned)commandFilterLongitudinalCalibLocked,
+          (unsigned)commandFilterLongitudinalCalibInhibitTorque,
           intentVelocityOut,
           setpointVelocityOut,
           setpointAccelerationOut,
@@ -899,7 +926,7 @@ int main(void) {
           process_debug();
         #else
           InputDecodePair inputDecodePair = InputDecode_BuildPair(input1[inIdx].raw, input2[inIdx].raw, cmdL, cmdR);
-          printf("in1:%i in2:%i rawLong:%i longOff:%i rawMinusOff:%i uCmd:%i cmdEff:%i arm:%d blk:%d nz:%u calibA:%u calibL:%u vIntent:%i iMode:%u zLatchMs:%u zRel:%u vSp:%i aSp:%i slip:%u cmdL:%i cmdR:%i ErrL:%u ErrR:%u BatADC:%i BatV:%i TempADC:%i Temp:%i StallL_t:%u StallR_t:%u StallSup:%u CtrlMode:%u\r\n",
+          printf("in1:%i in2:%i rawLong:%i longOff:%i rawMinusOff:%i uCmd:%i cmdEff:%i arm:%d blk:%d nz:%u calibA:%u calibL:%u calibI:%u vIntent:%i iMode:%u zLatchMs:%u zRel:%u vSp:%i aSp:%i slip:%u cmdL:%i cmdR:%i ErrL:%u ErrR:%u BatADC:%i BatV:%i TempADC:%i Temp:%i StallL_t:%u StallR_t:%u StallSup:%u CtrlMode:%u\r\n",
             inputDecodePair.raw1,     // 1: INPUT1
             inputDecodePair.raw2,     // 2: INPUT2
             longitudinalRawCmd,
@@ -912,6 +939,7 @@ int main(void) {
             (unsigned)intentNearZeroOut,
             (unsigned)commandFilterLongitudinalCalibActive,
             (unsigned)commandFilterLongitudinalCalibLocked,
+            (unsigned)commandFilterLongitudinalCalibInhibitTorque,
             intentVelocityOut,
             (unsigned)intentModeOut,
             (unsigned)intentZeroLatchElapsedMsOut,

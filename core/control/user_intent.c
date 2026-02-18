@@ -11,9 +11,7 @@
 
 #include <stdlib.h>
 #include "user_intent.h"
-
-#define USER_INTENT_HYST_ON    50
-#define USER_INTENT_HYST_OFF   35
+#include "config.h"
 
 static int16_t UserIntent_ApplyAxisHysteresis(int16_t input, uint8_t *active) {
   int16_t absInput = (int16_t)abs(input);

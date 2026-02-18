@@ -75,7 +75,7 @@ Convert normalized command into sharp desired velocity intent `v_intent`.
 - Braking emerges from large `Δv` in downstream setpoint/motor-control layers.
 - `ZERO_LATCH` uses directional armed→active behavior:
   - reversal while moving arms latch (braking remains natural),
-  - latch activates only at near-zero crossing and blocks only the opposite direction,
+  - latch activates only when measured speed enters near-zero (not when setpoint reaches zero) and blocks only the opposite direction,
   - latch releases after hold time at standstill or immediately if command goes neutral/other direction.
 
 ## 5. Velocity Setpoint Control Layer (1 kHz)
@@ -229,19 +229,27 @@ Scope:
 - Keep hard limits untouched in generated code.
 - Keep soft-limit path external to generated layer.
 
+Implementation status (current branch):
+
+- `core/control/velocity_setpoint_layer.*` is now active and no longer pass-through.
+- The setpoint layer enforces asymmetric per-loop trajectory rates (`SETPOINT_RATE_UP`, `SETPOINT_RATE_DOWN`) to realize slow-up / fast-down behavior.
+- A measured-speed slip-gap guard (`SETPOINT_SLIP_GAP_MAX`) clamps `|v_sp - v_actual|` and raises the existing `slip` telemetry flag when active.
+- `Src/main.c` feeds `speedAvg` into `VelocitySetpointLayer_Update(...)`, so shaping/guarding is anchored to measured speed.
+
 Test gate C:
 
 - `v_sp` traces show expected S-curve.
 - Emergency reverse yields strong controlled decel without mode artifacts.
 - No instability near zero crossing.
 
-### Phase D — slip-gap anti-windup + soft-limit tuning integration
+### Phase D — slip-gap policy refinement + soft-limit tuning integration
 
 Scope:
 
-- Enable `||v_sp|-|v_actual||` clamp and release policy.
+- Refine slip-gap clamp/release behavior and tune thresholds from road-test data.
 - Integrate/retune soft-limit strategy in this same phase (still outside generated hard-limit logic).
-- Finalize parameter placement in `config/control` and `config/user`.
+- Finalize parameter placement in `config/control_tuning` and `config/user`.
+- Reserve/prepare gains for a future outer velocity PID/PI controller (main-loop speed domain), explicitly separate from generated high-frequency current-loop gains.
 
 Test gate D:
 

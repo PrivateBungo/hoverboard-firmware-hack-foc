@@ -29,6 +29,7 @@ void VelocitySetpointLayer_Init(VelocitySetpointLayerState *state);
 void VelocitySetpointLayer_Reset(VelocitySetpointLayerState *state);
 void VelocitySetpointLayer_Update(VelocitySetpointLayerState *state,
                                   int16_t velocity_intent,
+                                  int16_t velocity_actual,
                                   VelocitySetpointLayerOutput *output);
 
 #endif // VELOCITY_SETPOINT_LAYER_H

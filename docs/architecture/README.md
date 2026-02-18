@@ -108,6 +108,10 @@ Outputs of this path are command targets and state flags that the ISR consumes.
 - The facade now composes layered config headers:
   - `config/feature/feature_flags.h` (variant/feature selection).
   - `config/control/control_defaults.h` (PWM/ADC/timing defaults used by control runtime).
+  - `config/control_tuning/command_filter_tuning.h` (boot neutral-offset calibration windows + guardrails (steering + longitudinal)).
+  - `config/control_tuning/intent_and_input_tuning.h` (input hysteresis, near-zero, and ZERO_LATCH timing knobs).
+  - `config/control_tuning/velocity_setpoint_tuning.h` (setpoint-shaper + longitudinal mapping tuning).
+  - `config/control_tuning/motor_controller_gains.h` (planned outer velocity PID/PI tuning; not generated current-loop gains).
   - `config/board/board_default.h` (board mapping defaults).
   - `config/user/user_params.h` (user-tunable default values).
 - Legacy config blocks that are still in `Inc/config.h` continue to function unchanged, so existing customization paths remain valid while migration proceeds.
