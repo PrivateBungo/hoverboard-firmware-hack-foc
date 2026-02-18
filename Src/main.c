@@ -262,6 +262,7 @@ int main(void) {
     int16_t debugTorqueAppliedOut = 0;
     int16_t debugTorquePreSlipOut = 0;
     int16_t debugSpeedErrOut = 0;
+    uint8_t debugPiActiveOut = 0U;
     int16_t cmdL_adj = 0;
     int16_t cmdR_adj = 0;
   #endif
@@ -529,12 +530,14 @@ int main(void) {
                                                        longitudinalRampUpRate,
                                                        longitudinalRampDownRate);
           debugTorquePreSlipOut = speed;
+          debugPiActiveOut = 1U;
           speed = DriveControl_ApplySlipSoftLimit(speed,
                                                   setpointSlipGapClampActive,
                                                   SOFT_LIMIT_TORQUE_WHEN_SLIP);
         } else {
           DriveControl_ResetLongitudinal(&driveControlLongitudinalState);
           debugTorquePreSlipOut = 0;
+          debugPiActiveOut = 0U;
         }
       }
 
@@ -732,7 +735,9 @@ int main(void) {
           int32_t vSpAbs = (vSpMmps >= 0) ? vSpMmps : -vSpMmps;
           int32_t vActAbs = (vActMmps >= 0) ? vActMmps : -vActMmps;
 
-          printf("Dbg uCmd:%d vSp:%s%ld.%03ldm/s vAct:%s%ld.%03ldm/s e:%d trqPI:%d iTerm:%d slip:%u stL:%u stR:%u trqOut:%d\r\n",
+          printf("Dbg mode:%u pi:%u uCmd:%d vSp:%s%ld.%03ldm/s vAct:%s%ld.%03ldm/s e:%d trqPI:%d iTerm:%d slip:%u stL:%u stR:%u trqOut:%d\r\n",
+            (unsigned)modeSupervisorState.selected_mode,
+            (unsigned)debugPiActiveOut,
             intentCmdEffOut,
             (vSpMmps < 0) ? "-" : "",
             (long)(vSpAbs / 1000),
