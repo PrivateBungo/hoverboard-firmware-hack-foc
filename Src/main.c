@@ -534,6 +534,7 @@ int main(void) {
 
         VelocitySetpointLayer_Update(&velocitySetpointLayerState,
                                      intentStateMachineOutput.velocity_intent,
+                                     speedAvg,
                                      &velocitySetpointLayerOutput);
 
         intentVelocityOut = intentStateMachineOutput.velocity_intent;
