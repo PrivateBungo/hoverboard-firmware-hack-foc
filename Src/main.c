@@ -38,6 +38,10 @@
 #include "motor_controller.h"
 #include "input_supervisor.h"
 #include "mode_supervisor.h"
+
+#define TROUBLESHOOT_ACCEL_UP_MMPS2      1000
+#define TROUBLESHOOT_ACCEL_DOWN_MMPS2    5000
+
 #include "stall_supervisor.h"
 #include "wheel_command_supervisor.h"
 #include "uart_reporting.h"
@@ -285,6 +289,7 @@ int main(void) {
     uint8_t motorControllerSaturatedOut = 0U;
     int32_t troubleshootingVelIntegratorLeft = 0;
     int32_t troubleshootingVelIntegratorRight = 0;
+    int16_t troubleshootingVelocitySetpointRpmActive = 0;
     int16_t cmdL_adj = 0;
     int16_t cmdR_adj = 0;
   #endif
@@ -430,6 +435,7 @@ int main(void) {
         MotorController_Reset(&motorControllerState);
         troubleshootingVelIntegratorLeft = 0;
         troubleshootingVelIntegratorRight = 0;
+        troubleshootingVelocitySetpointRpmActive = 0;
         DriveControl_ResetStallDecay(&stallDecayStateLeft);
         DriveControl_ResetStallDecay(&stallDecayStateRight);
         enable = 1;                       // enable motors
@@ -543,6 +549,7 @@ int main(void) {
         MotorController_Reset(&motorControllerState);
         troubleshootingVelIntegratorLeft = 0;
         troubleshootingVelIntegratorRight = 0;
+        troubleshootingVelocitySetpointRpmActive = 0;
         DriveControl_ResetStallDecay(&stallDecayStateLeft);
         DriveControl_ResetStallDecay(&stallDecayStateRight);
         WheelCommandSupervisor_Init(&wheelCommandSupervisorState);
@@ -559,6 +566,7 @@ int main(void) {
         int16_t speedMaxRpm = (int16_t)(rtP_Left.n_max >> 4);
         int32_t velSetpointRpmFixdt;
         int16_t velSetpointRpm;
+        int16_t setpointDeltaRpm;
         int16_t speedErrorRpmLeft;
         int16_t speedErrorRpmRight;
         int16_t measuredSpeedLeft;
@@ -581,6 +589,39 @@ int main(void) {
         velSetpointRpmFixdt = (int32_t)speed * (int32_t)speedMaxRpm;
         velSetpointRpm = (int16_t)(velSetpointRpmFixdt / 1000);
 
+        {
+          int32_t deltaSetpoint = (int32_t)velSetpointRpm - (int32_t)troubleshootingVelocitySetpointRpmActive;
+          int32_t accelUpRpmPerLoop;
+          int32_t accelDownRpmPerLoop;
+          int32_t rampStep;
+
+          accelUpRpmPerLoop = ((int32_t)TROUBLESHOOT_ACCEL_UP_MMPS2 * 60 * (int32_t)(DELAY_IN_MAIN_LOOP + 1U)) /
+                              ((int32_t)SETPOINT_WHEEL_CIRCUMFERENCE_MM * 1000);
+          accelDownRpmPerLoop = ((int32_t)TROUBLESHOOT_ACCEL_DOWN_MMPS2 * 60 * (int32_t)(DELAY_IN_MAIN_LOOP + 1U)) /
+                                ((int32_t)SETPOINT_WHEEL_CIRCUMFERENCE_MM * 1000);
+
+          if (accelUpRpmPerLoop < 1) {
+            accelUpRpmPerLoop = 1;
+          }
+          if (accelDownRpmPerLoop < 1) {
+            accelDownRpmPerLoop = 1;
+          }
+
+          if (deltaSetpoint > 0) {
+            rampStep = (deltaSetpoint > accelUpRpmPerLoop) ? accelUpRpmPerLoop : deltaSetpoint;
+          } else if (deltaSetpoint < 0) {
+            int32_t decelStep = -deltaSetpoint;
+            rampStep = (decelStep > accelDownRpmPerLoop) ? -accelDownRpmPerLoop : deltaSetpoint;
+          } else {
+            rampStep = 0;
+          }
+
+          setpointDeltaRpm = (int16_t)rampStep;
+          troubleshootingVelocitySetpointRpmActive = (int16_t)CLAMP((int16_t)((int32_t)troubleshootingVelocitySetpointRpmActive + rampStep),
+                                                                     -speedMaxRpm,
+                                                                     speedMaxRpm);
+        }
+
         measuredSpeedLeft = (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_LEFT);
         measuredSpeedRight = (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_RIGHT);
 
@@ -599,8 +640,8 @@ int main(void) {
           measuredSpeedRight = -measuredSpeedRight;
         }
 
-        speedErrorRpmLeft = (int16_t)(velSetpointRpm - measuredSpeedLeft);
-        speedErrorRpmRight = (int16_t)(velSetpointRpm - measuredSpeedRight);
+        speedErrorRpmLeft = (int16_t)(troubleshootingVelocitySetpointRpmActive - measuredSpeedLeft);
+        speedErrorRpmRight = (int16_t)(troubleshootingVelocitySetpointRpmActive - measuredSpeedRight);
 
         pTermLeft = ((int32_t)speedErrorRpmLeft * (int32_t)MOTOR_CTRL_VEL_KP_Q15) >> 15;
         pTermRight = ((int32_t)speedErrorRpmRight * (int32_t)MOTOR_CTRL_VEL_KP_Q15) >> 15;
@@ -657,8 +698,8 @@ int main(void) {
         cmdL = torqueCmdSatLeft;
         cmdR = torqueCmdSatRight;
 
-        setpointVelocityOut = velSetpointRpm;
-        setpointAccelerationOut = 0;
+        setpointVelocityOut = troubleshootingVelocitySetpointRpmActive;
+        setpointAccelerationOut = setpointDeltaRpm;
         motorControllerSpeedErrorOut = (int16_t)((speedErrorRpmLeft + speedErrorRpmRight) / 2);
         motorControllerSaturatedOut = (uint8_t)(saturatedLeft || saturatedRight);
       }
