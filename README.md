@@ -101,7 +101,7 @@ In this architecture, neutral offset learning lives in the input-facing Command 
 - Step B is complete and successful: `DRIVE_FORWARD`/`DRIVE_REVERSE`/`ZERO_LATCH` intent-state behavior is enabled, with user-intent hysteresis (50 on / 35 off) and debug telemetry fields (`iMode`, `zLatchMs`, `zRel`) for deterministic bench validation. `ZERO_LATCH` arm/activate/release decisions are based on measured speed (`speedAvg`) entering/leaving near-zero, not on setpoint reaching zero.
 - Step C is complete and successful: `velocity_setpoint_layer` now enforces asymmetric trajectory shaping (slow-up / fast-down) with measured-speed slip-gap clamp (`slip`).
 - Step D is complete and successful: slip-gap policy now uses enter/release hysteresis in `velocity_setpoint_layer`; accel/jerk tuning is now configured in physical units (mm/s^2, mm/s^3) normalized using 40 cm wheel geometry; TRQ-mode torque requests are soft-limited while slip clamp is active (`SOFT_LIMIT_TORQUE_WHEN_SLIP`) without changing generated hard-limit ownership.
-- Step E (outer velocity PID/PI controller that maps `v_sp` to torque request in main loop) is **not implemented yet** and remains pending by design.
+- Step E is complete and successful: an outer velocity PI controller now maps `v_sp` to torque request in the main loop (with saturation + anti-windup), replacing the temporary gain-only speed-to-torque path.
 
 
 ### Neutral offset calibration behavior (current implementation)

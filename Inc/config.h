@@ -128,8 +128,10 @@
 // #define ELECTRIC_BRAKE_THRES  120       // (0, 500) Threshold below at which the electric brake starts engaging.
 
 // Wheel command supervisor (post-mixer, pre-FOC)
-// The LPF coefficient below is tuned so a full step reaches ~90% in ~1000 ms at ~5 ms loop cadence.
-#define WHEEL_CMD_FILTER_COEF    750       // [-] fixdt(0,16,16) low-pass filter coefficient [0..65535], lower value = softer command ramp
+// IMPORTANT: this filter is after the Step-E outer velocity PI controller.
+// Keeping it too low can dominate the response and mask PI/setpoint tuning.
+// Use 65535 to bypass LPF, or lower values only for intentional wheel-command smoothing.
+#define WHEEL_CMD_FILTER_COEF    65535     // [-] fixdt(0,16,16) low-pass filter coefficient [0..65535], lower value = softer command ramp
 #define WHEEL_CMD_DEADBAND       15        // [-] absolute deadband, |cmd| <= 15 forces zero output
 #define WHEEL_CMD_HYST_ON        50        // [-] hysteresis ON threshold, |filtered cmd| must exceed this to apply torque
 #define WHEEL_CMD_HYST_OFF       35        // [-] hysteresis OFF threshold, output returns to zero below this threshold
