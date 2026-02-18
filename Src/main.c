@@ -481,7 +481,7 @@ int main(void) {
         }
       #endif
 
-      // ####### COMMAND FILTER + USER INTENT #######
+      // ####### COMMAND FILTER (longitudinal only troubleshooting path) #######
       {
         CommandFilterOutput commandFilterOutput;
 
@@ -499,12 +499,12 @@ int main(void) {
         longitudinalRawCmd = commandFilterOutput.longitudinal_raw;
         longitudinalCenteredCmd = commandFilterOutput.longitudinal_cmd;
 
-        /* User intent layer owns command deadband/sign hysteresis policy. */
-        UserIntent_BuildLongitudinalSteeringIntent(&userIntentState,
-                                                   commandFilterOutput.steering_cmd,
-                                                   commandFilterOutput.longitudinal_cmd,
-                                                   &steer,
-                                                   &speed);
+        /*
+         * Troubleshooting mode: bypass user-intent shaping and use only
+         * longitudinal command directly as torque request.
+         */
+        steer = 0;
+        speed = CLAMP(commandFilterOutput.longitudinal_cmd, -1000, 1000);
         userIntentLongitudinalOut = speed;
       }
 
@@ -542,63 +542,29 @@ int main(void) {
         WheelCommandSupervisor_Init(&wheelCommandSupervisorState);
       }
 
-      {
-        IntentStateMachineOutput intentStateMachineOutput;
-        VelocitySetpointLayerOutput velocitySetpointLayerOutput;
+      /*
+       * Troubleshooting mode: disable intent/setpoint/motor PID/mixing layers.
+       * Feed direct longitudinal torque command equally to both wheels.
+       */
+      intentVelocityOut = speed;
+      intentCmdEffOut = speed;
+      intentArmedSignOut = (speed > 0) - (speed < 0);
+      intentBlockedSignOut = 0;
+      intentNearZeroOut = (uint8_t)(ABS(speed) <= 10);
+      intentModeOut = (uint8_t)INTENT_STATE_MACHINE_DRIVE_FORWARD;
+      intentZeroLatchElapsedMsOut = 0U;
+      intentZeroLatchReleasedOut = 0U;
+      intentZeroLatchArmedOut = 0U;
+      intentZeroLatchActivatedOut = 0U;
+      setpointVelocityOut = speed;
+      setpointAccelerationOut = 0;
+      setpointSlipGapClampActive = 0U;
+      motorControllerSpeedErrorOut = 0;
+      motorControllerSaturatedOut = 0U;
 
-        IntentStateMachine_Update(&intentStateMachineState,
-                                  speed,
-                                  speedAvg,
-                                  &intentStateMachineOutput);
-
-        VelocitySetpointLayer_Update(&velocitySetpointLayerState,
-                                     intentStateMachineOutput.velocity_intent,
-                                     speedAvg,
-                                     (int16_t)(rtP_Left.n_max >> 4),
-                                     &velocitySetpointLayerOutput);
-
-        intentVelocityOut = intentStateMachineOutput.velocity_intent;
-        intentCmdEffOut = intentStateMachineOutput.cmd_eff;
-        intentArmedSignOut = intentStateMachineOutput.armed_sign;
-        intentBlockedSignOut = intentStateMachineOutput.blocked_sign;
-        intentNearZeroOut = intentStateMachineOutput.near_zero;
-        intentModeOut = (uint8_t)intentStateMachineOutput.mode;
-        intentZeroLatchElapsedMsOut = intentStateMachineOutput.zero_latch_elapsed_ms;
-        intentZeroLatchReleasedOut = intentStateMachineOutput.zero_latch_released;
-        intentZeroLatchArmedOut = intentStateMachineOutput.zero_latch_armed;
-        intentZeroLatchActivatedOut = intentStateMachineOutput.zero_latch_activated;
-        setpointVelocityOut = velocitySetpointLayerOutput.velocity_setpoint;
-        setpointAccelerationOut = velocitySetpointLayerOutput.acceleration_setpoint;
-        setpointSlipGapClampActive = velocitySetpointLayerOutput.slip_gap_clamp_active;
-        speed = velocitySetpointLayerOutput.velocity_setpoint;
-      }
-
-      {
-        MotorControllerOutput motorControllerOutput;
-        uint8_t trqModeEnabled = (uint8_t)(modeSupervisorState.selected_mode == TRQ_MODE);
-
-        MotorController_Update(&motorControllerState,
-                               speed,
-                               speedAvg,
-                               (int16_t)(rtP_Left.n_max >> 4),
-                               trqModeEnabled,
-                               &motorControllerOutput);
-
-        motorControllerSpeedErrorOut = motorControllerOutput.speed_error_rpm;
-        motorControllerSaturatedOut = motorControllerOutput.saturated;
-        speed = motorControllerOutput.torque_cmd;
-        speed = DriveControl_ApplySlipSoftLimit(speed,
-                                                setpointSlipGapClampActive,
-                                                SOFT_LIMIT_TORQUE_WHEN_SLIP);
-      }
-
-      /* Debug simplification: temporarily disable steering contribution so longitudinal tuning is isolated. */
       steer = 0;
-
-      /* Torque-domain stage: intent-to-wheel torque mapping/mixing. */
-      DriveControl_MixCommands(speed, steer, &cmdL, &cmdR);
-
-      WheelCommandSupervisor_Update(&wheelCommandSupervisorState, cmdL, cmdR, &cmdL, &cmdR);
+      cmdL = speed;
+      cmdR = speed;
 
 
       cmdL_adj = cmdL;
