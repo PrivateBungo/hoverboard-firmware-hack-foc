@@ -50,19 +50,11 @@
 void SystemClock_Config(void);
 
 #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
-#define DEBUG_SETPOINT_PRINT_INTERVAL_LOOPS  40U  // ~200 ms at 5 ms loop
+#define DEBUG_SETPOINT_PRINT_PERIOD_MS      200U
+#define DEBUG_SETPOINT_PRINT_INTERVAL_LOOPS (((DEBUG_SETPOINT_PRINT_PERIOD_MS / (DELAY_IN_MAIN_LOOP + 1U)) > 0U) ? (DEBUG_SETPOINT_PRINT_PERIOD_MS / (DELAY_IN_MAIN_LOOP + 1U)) : 1U)
 
-static const char *IntentModeToString(IntentStateMachineMode mode) {
-  switch (mode) {
-    case INTENT_STATE_MACHINE_DRIVE_FORWARD:
-      return "FWD";
-    case INTENT_STATE_MACHINE_DRIVE_REVERSE:
-      return "REV";
-    case INTENT_STATE_MACHINE_ZERO_LATCH:
-      return "ZL";
-    default:
-      return "UNK";
-  }
+static int32_t Debug_RpmToMilliMetersPerSecond(int16_t speedRpm) {
+  return ((int32_t)speedRpm * SETPOINT_WHEEL_CIRCUMFERENCE_MM) / 60;
 }
 #endif
 
@@ -188,8 +180,6 @@ static uint32_t    inactivity_timeout_counter;
 static MultipleTap MultipleTapBrake;    // define multiple tap functionality for the Brake pedal
 
 #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
-  #define DEBUG_INPUT_PRINT_PERIOD_MS       5000U
-  #define DEBUG_INPUT_PRINT_INTERVAL_LOOPS  (((DEBUG_INPUT_PRINT_PERIOD_MS / (DELAY_IN_MAIN_LOOP + 1U)) > 0U) ? (DEBUG_INPUT_PRINT_PERIOD_MS / (DELAY_IN_MAIN_LOOP + 1U)) : 1U)
   #define DEBUG_STALL_PRINT_PERIOD_MS        250U
   #define DEBUG_STALL_PRINT_INTERVAL_LOOPS  (((DEBUG_STALL_PRINT_PERIOD_MS / (DELAY_IN_MAIN_LOOP + 1U)) > 0U) ? (DEBUG_STALL_PRINT_PERIOD_MS / (DELAY_IN_MAIN_LOOP + 1U)) : 1U)
 #endif
@@ -266,20 +256,13 @@ int main(void) {
     uint8_t commandFilterLongitudinalCalibLocked = 0U;
     uint8_t commandFilterLongitudinalCalibUpdated = 0U;
     uint8_t commandFilterLongitudinalCalibInhibitTorque = 0U;
-    int16_t userIntentLongitudinalOut = 0;
-    int16_t intentVelocityOut = 0;
     int16_t intentCmdEffOut = 0;
-    int8_t intentArmedSignOut = 0;
-    int8_t intentBlockedSignOut = 0;
-    uint8_t intentNearZeroOut = 0U;
-    uint8_t intentModeOut = 0U;
-    uint16_t intentZeroLatchElapsedMsOut = 0U;
-    uint8_t intentZeroLatchReleasedOut = 0U;
-    uint8_t intentZeroLatchArmedOut = 0U;
-    uint8_t intentZeroLatchActivatedOut = 0U;
     int16_t setpointVelocityOut = 0;
-    int16_t setpointAccelerationOut = 0;
     uint8_t setpointSlipGapClampActive = 0U;
+    int16_t debugTorqueAppliedOut = 0;
+    int16_t debugTorquePreSlipOut = 0;
+    int16_t debugSpeedErrOut = 0;
+    uint8_t debugPiActiveOut = 0U;
     int16_t cmdL_adj = 0;
     int16_t cmdR_adj = 0;
   #endif
@@ -292,36 +275,12 @@ int main(void) {
   int16_t board_temp_adcFilt  = adc_buffer.temp;
 
   #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
-    uint8_t prevLeftErrCode    = g_errCodeLeftEffective;
-    uint8_t prevRightErrCode   = g_errCodeRightEffective;
     uint8_t prevTimeoutFlgADC  = timeoutFlgADC;
     uint8_t prevTimeoutFlgSerial = timeoutFlgSerial;
     uint8_t prevTimeoutFlgGen  = timeoutFlgGen;
     uint8_t prevEnableState    = enable;
     uint8_t prevCtrlModReq     = ctrlModReq;
-    uint8_t prevIntentModeOut  = (uint8_t)INTENT_STATE_MACHINE_DRIVE_FORWARD;
-    uint16_t prevIntentZeroLatchElapsedMsOut = 0U;
-    uint8_t prevCommandFilterLongitudinalCalibActive = 0U;
-    uint8_t prevCommandFilterLongitudinalCalibLocked = 0U;
-    uint8_t prevCommandFilterLongitudinalCalibInhibitTorque = 0U;
-    #ifndef VARIANT_TRANSPOTTER
-      uint8_t prevStallActiveLeft  = 0U;
-      uint8_t prevStallActiveRight = 0U;
-    #endif
 
-    printf("StallDecay cfg: spd<=%u trig>=%u preemptMs=%u preemptCmd=%u floor=%u totalMs=%u loopMs=%u ctrlModReq=%u\r\n",
-      (unsigned)STALL_DECAY_SPEED_RPM,
-      (unsigned)STALL_DECAY_CMD_TRIGGER,
-      (unsigned)STALL_DECAY_PREEMPT_MS,
-      (unsigned)STALL_DECAY_CMD_PREEMPT,
-      (unsigned)STALL_DECAY_CMD_FLOOR,
-      (unsigned)STALL_DECAY_TIME_MS,
-      (unsigned)(DELAY_IN_MAIN_LOOP + 1U),
-      (unsigned)CTRL_MOD_REQ);
-    printf("StallDecay mode flags: inTRQ=%u inVLT=%u runtimeCtrlMode=%u\r\n",
-      (unsigned)STALL_DECAY_IN_TRQ_MODE,
-      (unsigned)STALL_DECAY_IN_VLT_MODE,
-      (unsigned)ctrlModReq);
   #endif
 
   #ifdef MULTI_MODE_DRIVE
@@ -502,7 +461,6 @@ int main(void) {
                                                    commandFilterOutput.longitudinal_cmd,
                                                    &steer,
                                                    &speed);
-        userIntentLongitudinalOut = speed;
       }
 
       // ####### VARIANT_HOVERCAR #######
@@ -524,7 +482,6 @@ int main(void) {
       }
       #endif
 
-      userIntentLongitudinalOut = speed;
 
       if (commandFilterLongitudinalCalibInhibitTorque != 0U) {
         /* Safety latch: suppress torque while boot-time neutral calibration is in progress. */
@@ -554,18 +511,8 @@ int main(void) {
                                      (int16_t)(rtP_Left.n_max >> 4),
                                      &velocitySetpointLayerOutput);
 
-        intentVelocityOut = intentStateMachineOutput.velocity_intent;
         intentCmdEffOut = intentStateMachineOutput.cmd_eff;
-        intentArmedSignOut = intentStateMachineOutput.armed_sign;
-        intentBlockedSignOut = intentStateMachineOutput.blocked_sign;
-        intentNearZeroOut = intentStateMachineOutput.near_zero;
-        intentModeOut = (uint8_t)intentStateMachineOutput.mode;
-        intentZeroLatchElapsedMsOut = intentStateMachineOutput.zero_latch_elapsed_ms;
-        intentZeroLatchReleasedOut = intentStateMachineOutput.zero_latch_released;
-        intentZeroLatchArmedOut = intentStateMachineOutput.zero_latch_armed;
-        intentZeroLatchActivatedOut = intentStateMachineOutput.zero_latch_activated;
         setpointVelocityOut = velocitySetpointLayerOutput.velocity_setpoint;
-        setpointAccelerationOut = velocitySetpointLayerOutput.acceleration_setpoint;
         setpointSlipGapClampActive = velocitySetpointLayerOutput.slip_gap_clamp_active;
         speed = velocitySetpointLayerOutput.velocity_setpoint;
       }
@@ -582,11 +529,15 @@ int main(void) {
                                                        speedMaxRpm,
                                                        longitudinalRampUpRate,
                                                        longitudinalRampDownRate);
+          debugTorquePreSlipOut = speed;
+          debugPiActiveOut = 1U;
           speed = DriveControl_ApplySlipSoftLimit(speed,
                                                   setpointSlipGapClampActive,
                                                   SOFT_LIMIT_TORQUE_WHEN_SLIP);
         } else {
           DriveControl_ResetLongitudinal(&driveControlLongitudinalState);
+          debugTorquePreSlipOut = 0;
+          debugPiActiveOut = 0U;
         }
       }
 
@@ -595,6 +546,7 @@ int main(void) {
 
       WheelCommandSupervisor_Update(&wheelCommandSupervisorState, cmdL, cmdR, &cmdL, &cmdR);
 
+      debugTorqueAppliedOut = (int16_t)(((int32_t)cmdL + (int32_t)cmdR) / 2);
 
       cmdL_adj = cmdL;
       cmdR_adj = cmdR;
@@ -619,44 +571,6 @@ int main(void) {
         pwml = pwmlAfterDecay;
         pwmr = pwmrAfterDecay;
 
-        #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
-          uint8_t stallActiveLeft  = (stallDecayStateLeft.stallTimerMs > 0U);
-          uint8_t stallActiveRight = (stallDecayStateRight.stallTimerMs > 0U);
-          uint8_t leftLimited = (ABS(pwmlBeforeDecay) > ABS(pwmlAfterDecay));
-          uint8_t rightLimited = (ABS(pwmrBeforeDecay) > ABS(pwmrAfterDecay));
-
-          if ((stallActiveLeft != prevStallActiveLeft) || (stallActiveRight != prevStallActiveRight)) {
-            printf("StallDecay state L:%u(%ums) R:%u(%ums) nL:%i nR:%i cmdInL:%i cmdOutL:%i cmdInR:%i cmdOutR:%i\r\n",
-              stallActiveLeft,
-              stallDecayStateLeft.stallTimerMs,
-              stallActiveRight,
-              stallDecayStateRight.stallTimerMs,
-              (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_LEFT),
-              (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_RIGHT),
-              pwmlBeforeDecay,
-              pwmlAfterDecay,
-              pwmrBeforeDecay,
-              pwmrAfterDecay);
-            prevStallActiveLeft = stallActiveLeft;
-            prevStallActiveRight = stallActiveRight;
-          }
-
-          if ((stallActiveLeft || stallActiveRight) &&
-              (main_loop_counter % DEBUG_STALL_PRINT_INTERVAL_LOOPS == 0U) &&
-              (leftLimited || rightLimited)) {
-            printf("StallDecay act tL:%ums tR:%ums nL:%i nR:%i inL:%i outL:%i inR:%i outR:%i limL:%u limR:%u\r\n",
-              stallDecayStateLeft.stallTimerMs,
-              stallDecayStateRight.stallTimerMs,
-              (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_LEFT),
-              (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_RIGHT),
-              pwmlBeforeDecay,
-              pwmlAfterDecay,
-              pwmrBeforeDecay,
-              pwmrAfterDecay,
-              leftLimited,
-              rightLimited);
-          }
-        #endif
       }
 
       {
@@ -811,160 +725,36 @@ int main(void) {
 
     // ####### DEBUG SERIAL OUT #######
     #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
-      if (commandFilterLongitudinalCalibLocked != prevCommandFilterLongitudinalCalibLocked) {
-        printf("CmdFilter calib lock:%u rawLong:%d longOff:%d centered:%d\r\n",
-          (unsigned)commandFilterLongitudinalCalibLocked,
-          longitudinalRawCmd,
-          commandFilterLongitudinalOffsetOut,
-          longitudinalCenteredCmd);
-        prevCommandFilterLongitudinalCalibLocked = commandFilterLongitudinalCalibLocked;
-      }
-
-      if (commandFilterLongitudinalCalibInhibitTorque != prevCommandFilterLongitudinalCalibInhibitTorque) {
-        printf("CmdFilter torque inhibit:%u rawLong:%d longOff:%d centered:%d\r\n",
-          (unsigned)commandFilterLongitudinalCalibInhibitTorque,
-          longitudinalRawCmd,
-          commandFilterLongitudinalOffsetOut,
-          longitudinalCenteredCmd);
-        prevCommandFilterLongitudinalCalibInhibitTorque = commandFilterLongitudinalCalibInhibitTorque;
-      }
-
-      if (commandFilterLongitudinalCalibActive != prevCommandFilterLongitudinalCalibActive) {
-        printf("CmdFilter calib active:%u rawLong:%d longOff:%d centered:%d\r\n",
-          (unsigned)commandFilterLongitudinalCalibActive,
-          longitudinalRawCmd,
-          commandFilterLongitudinalOffsetOut,
-          longitudinalCenteredCmd);
-        prevCommandFilterLongitudinalCalibActive = commandFilterLongitudinalCalibActive;
-      }
-
-      if (commandFilterLongitudinalCalibUpdated != 0U) {
-        printf("CmdFilter calib update rawLong:%d longOff:%d centered:%d\r\n",
-          longitudinalRawCmd,
-          commandFilterLongitudinalOffsetOut,
-          longitudinalCenteredCmd);
-      }
-
-      if (intentModeOut != prevIntentModeOut) {
-        printf("Intent mode transition: %u -> %u (cmd:%d speed:%d zLatchMs:%u)\r\n",
-          (unsigned)prevIntentModeOut,
-          (unsigned)intentModeOut,
-          intentCmdEffOut,
-          speedAvg,
-          (unsigned)intentZeroLatchElapsedMsOut);
-        prevIntentModeOut = intentModeOut;
-      }
-
-      if (intentZeroLatchArmedOut != 0U) {
-        printf("Intent zero-latch armed sign:%d cmdEff:%d speed:%d nearZero:%u\r\n",
-          (int)intentArmedSignOut,
-          intentCmdEffOut,
-          speedAvg,
-          (unsigned)intentNearZeroOut);
-      }
-
-      if (intentZeroLatchActivatedOut != 0U) {
-        printf("Intent zero-latch active blocked:%d cmdEff:%d speed:%d\r\n",
-          (int)intentBlockedSignOut,
-          intentCmdEffOut,
-          speedAvg);
-      }
-
-      if (intentModeOut == (uint8_t)INTENT_STATE_MACHINE_ZERO_LATCH &&
-          intentZeroLatchElapsedMsOut != prevIntentZeroLatchElapsedMsOut &&
-          (intentZeroLatchElapsedMsOut % 100U) == 0U) {
-        printf("Intent zero-latch timer: %u ms (cmd:%d speed:%d)\r\n",
-          (unsigned)intentZeroLatchElapsedMsOut,
-          intentCmdEffOut,
-          speedAvg);
-      }
-
-      if (intentZeroLatchReleasedOut != 0U) {
-        printf("Intent zero-latch release (cmdEff:%d speed:%d nearZero:%u)\r\n",
-          intentCmdEffOut,
-          speedAvg,
-          (unsigned)intentNearZeroOut);
-      }
-      prevIntentZeroLatchElapsedMsOut = intentZeroLatchElapsedMsOut;
-
-      if (g_errCodeLeftEffective != prevLeftErrCode || g_errCodeRightEffective != prevRightErrCode) {
-        printf("MotorErr L:%u[b0:%u b1:%u b2:%u] R:%u[b0:%u b1:%u b2:%u]\r\n",
-          g_errCodeLeftEffective,
-          ((g_errCodeLeftEffective  & 0x01U) != 0U),
-          ((g_errCodeLeftEffective  & 0x02U) != 0U),
-          ((g_errCodeLeftEffective  & 0x04U) != 0U),
-          g_errCodeRightEffective,
-          ((g_errCodeRightEffective & 0x01U) != 0U),
-          ((g_errCodeRightEffective & 0x02U) != 0U),
-          ((g_errCodeRightEffective & 0x04U) != 0U));
-
-        prevLeftErrCode  = g_errCodeLeftEffective;
-        prevRightErrCode = g_errCodeRightEffective;
-      }
-
       if (main_loop_counter % DEBUG_SETPOINT_PRINT_INTERVAL_LOOPS == 0U) {
-        printf("SetpointTrace mode:%s rawLong:%d longOff:%d rawLongMinusOff:%d uCmd:%d cmdEff:%d arm:%d blk:%d nz:%u calibA:%u calibL:%u calibI:%u vIntent:%d vSet:%d aSet:%d vAct:%d slip:%u zLatchMs:%u zRel:%u\r\n",
-          IntentModeToString((IntentStateMachineMode)intentModeOut),
-          longitudinalRawCmd,
-          commandFilterLongitudinalOffsetOut,
-          longitudinalCenteredCmd,
-          userIntentLongitudinalOut,
-          intentCmdEffOut,
-          (int)intentArmedSignOut,
-          (int)intentBlockedSignOut,
-          (unsigned)intentNearZeroOut,
-          (unsigned)commandFilterLongitudinalCalibActive,
-          (unsigned)commandFilterLongitudinalCalibLocked,
-          (unsigned)commandFilterLongitudinalCalibInhibitTorque,
-          intentVelocityOut,
-          setpointVelocityOut,
-          setpointAccelerationOut,
-          speedAvg,
-          (unsigned)setpointSlipGapClampActive,
-          (unsigned)intentZeroLatchElapsedMsOut,
-          (unsigned)intentZeroLatchReleasedOut);
-      }
-
-      if (main_loop_counter % DEBUG_INPUT_PRINT_INTERVAL_LOOPS == 0) {    // Send data periodically every ~5 s
         #if defined(DEBUG_SERIAL_PROTOCOL)
           process_debug();
         #else
-          InputDecodePair inputDecodePair = InputDecode_BuildPair(input1[inIdx].raw, input2[inIdx].raw, cmdL, cmdR);
-          printf("in1:%i in2:%i rawLong:%i longOff:%i rawMinusOff:%i uCmd:%i cmdEff:%i arm:%d blk:%d nz:%u calibA:%u calibL:%u calibI:%u vIntent:%i iMode:%u zLatchMs:%u zRel:%u vSp:%i aSp:%i slip:%u cmdL:%i cmdR:%i ErrL:%u ErrR:%u BatADC:%i BatV:%i TempADC:%i Temp:%i StallL_t:%u StallR_t:%u StallSup:%u CtrlMode:%u\r\n",
-            inputDecodePair.raw1,     // 1: INPUT1
-            inputDecodePair.raw2,     // 2: INPUT2
-            longitudinalRawCmd,
-            commandFilterLongitudinalOffsetOut,
-            longitudinalCenteredCmd,
-            userIntentLongitudinalOut,
+          int32_t vSpMmps = Debug_RpmToMilliMetersPerSecond(setpointVelocityOut);
+          int32_t vActMmps = Debug_RpmToMilliMetersPerSecond(speedAvg);
+          debugSpeedErrOut = (int16_t)(setpointVelocityOut - speedAvg);
+          int32_t vSpAbs = (vSpMmps >= 0) ? vSpMmps : -vSpMmps;
+          int32_t vActAbs = (vActMmps >= 0) ? vActMmps : -vActMmps;
+
+          printf("Dbg mode:%u pi:%u uCmd:%d vSp:%s%ld.%03ldm/s vAct:%s%ld.%03ldm/s e:%d trqPI:%d iTerm:%d slip:%u stL:%u stR:%u trqOut:%d\r\n",
+            (unsigned)modeSupervisorState.selected_mode,
+            (unsigned)debugPiActiveOut,
             intentCmdEffOut,
-            (int)intentArmedSignOut,
-            (int)intentBlockedSignOut,
-            (unsigned)intentNearZeroOut,
-            (unsigned)commandFilterLongitudinalCalibActive,
-            (unsigned)commandFilterLongitudinalCalibLocked,
-            (unsigned)commandFilterLongitudinalCalibInhibitTorque,
-            intentVelocityOut,
-            (unsigned)intentModeOut,
-            (unsigned)intentZeroLatchElapsedMsOut,
-            (unsigned)intentZeroLatchReleasedOut,
-            setpointVelocityOut,
-            setpointAccelerationOut,
+            (vSpMmps < 0) ? "-" : "",
+            (long)(vSpAbs / 1000),
+            (long)(vSpAbs % 1000),
+            (vActMmps < 0) ? "-" : "",
+            (long)(vActAbs / 1000),
+            (long)(vActAbs % 1000),
+            debugSpeedErrOut,
+            debugTorquePreSlipOut,
+            driveControlLongitudinalState.speedIntegratorCmd,
             (unsigned)setpointSlipGapClampActive,
-            inputDecodePair.cmd1,
-            inputDecodePair.cmd2,
-            g_errCodeLeftEffective,       // 5: left motor error code flags
-            g_errCodeRightEffective,      // 6: right motor error code flags
-            adc_buffer.batt1,         // 7: for battery voltage calibration
-            batVoltageCalib,          // 8: for verifying battery voltage calibration
-            board_temp_adcFilt,       // 9: for board temperature calibration
-            board_temp_deg_c,         // 10: for verifying board temperature calibration
-            stallDecayStateLeft.stallTimerMs,
-            stallDecayStateRight.stallTimerMs,
-            (unsigned)StallSupervisor_IsActive(&stallSupervisorState),
-            ctrlModReq);        // 10: for verifying board temperature calibration
+            (unsigned)stallDecayStateLeft.stallTimerMs,
+            (unsigned)stallDecayStateRight.stallTimerMs,
+            debugTorqueAppliedOut);
         #endif
       }
+
     #endif
 
     // ####### FEEDBACK SERIAL OUT #######
