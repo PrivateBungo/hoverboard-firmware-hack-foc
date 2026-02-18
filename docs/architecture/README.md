@@ -51,6 +51,9 @@ The architecture is therefore not a generic layered application in the abstract;
 - `core/io/uart_reporting.*`
   - Encapsulates UART feedback-frame construction and reporting state transitions.
 
+- `core/control/motor_controller.*`
+  - Encapsulates the Step-E outer velocity PI controller (`v_sp` to torque request) with saturation/anti-windup behavior in main-loop time.
+
 These modules are now active in the build and used by `main.c`, reducing direct monolithic logic density.
 
 ## 3. Control and data flow
@@ -111,7 +114,7 @@ Outputs of this path are command targets and state flags that the ISR consumes.
   - `config/control_tuning/command_filter_tuning.h` (boot neutral-offset calibration windows + guardrails (steering + longitudinal)).
   - `config/control_tuning/intent_and_input_tuning.h` (input hysteresis, near-zero, and ZERO_LATCH timing knobs).
   - `config/control_tuning/velocity_setpoint_tuning.h` (setpoint-shaper + longitudinal mapping tuning).
-  - `config/control_tuning/motor_controller_gains.h` (planned outer velocity PID/PI tuning; not generated current-loop gains).
+  - `config/control_tuning/motor_controller_gains.h` (outer velocity PI tuning for the main-loop speed-domain controller; not generated current-loop gains).
   - `config/board/board_default.h` (board mapping defaults).
   - `config/user/user_params.h` (user-tunable default values).
 - Legacy config blocks that are still in `Inc/config.h` continue to function unchanged, so existing customization paths remain valid while migration proceeds.

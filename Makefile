@@ -60,7 +60,8 @@ core/control/foc_adapter.c \
 core/control/user_intent.c \
 core/control/command_filter.c \
 core/control/intent_state_machine.c \
-core/control/velocity_setpoint_layer.c
+core/control/velocity_setpoint_layer.c \
+core/control/motor_controller.c
 
 # ASM sources
 ASM_SOURCES =  \

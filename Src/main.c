@@ -35,6 +35,7 @@
 #include "intent_state_machine.h"
 #include "user_intent.h"
 #include "velocity_setpoint_layer.h"
+#include "motor_controller.h"
 #include "input_supervisor.h"
 #include "mode_supervisor.h"
 #include "stall_supervisor.h"
@@ -174,7 +175,7 @@ static int16_t    speed;                // local variable for speed. -1000 to 10
   static CommandFilterState commandFilterState;
   static IntentStateMachineState intentStateMachineState;
   static VelocitySetpointLayerState velocitySetpointLayerState;
-  static DriveControlLongitudinalState driveControlLongitudinalState;
+  static MotorControllerState motorControllerState;
   static DriveControlStallDecayState stallDecayStateLeft;
   static DriveControlStallDecayState stallDecayStateRight;
   static WheelCommandSupervisorState wheelCommandSupervisorState;
@@ -249,7 +250,7 @@ int main(void) {
     CommandFilter_Init(&commandFilterState);
     IntentStateMachine_Init(&intentStateMachineState);
     VelocitySetpointLayer_Init(&velocitySetpointLayerState);
-    DriveControl_InitLongitudinal(&driveControlLongitudinalState);
+    MotorController_Init(&motorControllerState);
     DriveControl_ResetStallDecay(&stallDecayStateLeft);
     DriveControl_ResetStallDecay(&stallDecayStateRight);
     WheelCommandSupervisor_Init(&wheelCommandSupervisorState);
@@ -280,6 +281,8 @@ int main(void) {
     int16_t setpointVelocityOut = 0;
     int16_t setpointAccelerationOut = 0;
     uint8_t setpointSlipGapClampActive = 0U;
+    int16_t motorControllerSpeedErrorOut = 0;
+    uint8_t motorControllerSaturatedOut = 0U;
     int16_t cmdL_adj = 0;
     int16_t cmdR_adj = 0;
   #endif
@@ -422,7 +425,7 @@ int main(void) {
         CommandFilter_Reset(&commandFilterState);
         IntentStateMachine_Reset(&intentStateMachineState);
         VelocitySetpointLayer_Reset(&velocitySetpointLayerState);
-        DriveControl_ResetLongitudinal(&driveControlLongitudinalState);
+        MotorController_Reset(&motorControllerState);
         DriveControl_ResetStallDecay(&stallDecayStateLeft);
         DriveControl_ResetStallDecay(&stallDecayStateRight);
         enable = 1;                       // enable motors
@@ -533,7 +536,7 @@ int main(void) {
         UserIntent_Reset(&userIntentState);
         IntentStateMachine_Reset(&intentStateMachineState);
         VelocitySetpointLayer_Reset(&velocitySetpointLayerState);
-        DriveControl_ResetLongitudinal(&driveControlLongitudinalState);
+        MotorController_Reset(&motorControllerState);
         DriveControl_ResetStallDecay(&stallDecayStateLeft);
         DriveControl_ResetStallDecay(&stallDecayStateRight);
         WheelCommandSupervisor_Init(&wheelCommandSupervisorState);
@@ -571,22 +574,32 @@ int main(void) {
       }
 
       {
-        uint16_t longitudinalRampUpRate = (uint16_t)((((uint32_t)rate * LONG_RAMP_UP_NUM) / LONG_RAMP_UP_DEN) > 0U ? (((uint32_t)rate * LONG_RAMP_UP_NUM) / LONG_RAMP_UP_DEN) : 1U);
-        uint16_t longitudinalRampDownRate = (uint16_t)((((uint32_t)longitudinalRampUpRate * LONG_RAMP_DOWN_NUM) / LONG_RAMP_DOWN_DEN) > 0U ? (((uint32_t)longitudinalRampUpRate * LONG_RAMP_DOWN_NUM) / LONG_RAMP_DOWN_DEN) : 1U);
+        MotorControllerOutput motorControllerOutput;
+        uint8_t trqModeEnabled = (uint8_t)(modeSupervisorState.selected_mode == TRQ_MODE);
 
-        if (modeSupervisorState.selected_mode == TRQ_MODE) {
-          int16_t speedMaxRpm = (int16_t)(rtP_Left.n_max >> 4);
-          speed = DriveControl_BuildLongitudinalTorque(&driveControlLongitudinalState,
-                                                       speed,
-                                                       speedAvg,
-                                                       speedMaxRpm,
-                                                       longitudinalRampUpRate,
-                                                       longitudinalRampDownRate);
+        MotorController_Update(&motorControllerState,
+                               speed,
+                               speedAvg,
+                               (int16_t)(rtP_Left.n_max >> 4),
+                               trqModeEnabled,
+                               &motorControllerOutput);
+
+        if (trqModeEnabled != 0U) {
+          motorControllerSpeedErrorOut = motorControllerOutput.speed_error_rpm;
+          motorControllerSaturatedOut = motorControllerOutput.saturated;
+          speed = motorControllerOutput.torque_cmd;
           speed = DriveControl_ApplySlipSoftLimit(speed,
                                                   setpointSlipGapClampActive,
                                                   SOFT_LIMIT_TORQUE_WHEN_SLIP);
         } else {
-          DriveControl_ResetLongitudinal(&driveControlLongitudinalState);
+          /*
+           * Preserve legacy non-TRQ behavior:
+           * - in VLT/SPD modes the generated model interprets r_inpTgt per mode,
+           *   so keep passing the shaped command domain instead of forcing outer-loop torque.
+           */
+          motorControllerSpeedErrorOut = 0;
+          motorControllerSaturatedOut = 0U;
+          MotorController_Reset(&motorControllerState);
         }
       }
 
@@ -903,7 +916,7 @@ int main(void) {
       }
 
       if (main_loop_counter % DEBUG_SETPOINT_PRINT_INTERVAL_LOOPS == 0U) {
-        printf("SetpointTrace mode:%s rawLong:%d longOff:%d rawLongMinusOff:%d uCmd:%d cmdEff:%d arm:%d blk:%d nz:%u calibA:%u calibL:%u calibI:%u vIntent:%d vSet:%d aSet:%d vAct:%d slip:%u zLatchMs:%u zRel:%u\r\n",
+        printf("SetpointTrace mode:%s rawLong:%d longOff:%d rawLongMinusOff:%d uCmd:%d cmdEff:%d arm:%d blk:%d nz:%u calibA:%u calibL:%u calibI:%u vIntent:%d vSet:%d aSet:%d vAct:%d vErr:%d vSat:%u slip:%u zLatchMs:%u zRel:%u\r\n",
           IntentModeToString((IntentStateMachineMode)intentModeOut),
           longitudinalRawCmd,
           commandFilterLongitudinalOffsetOut,
@@ -920,6 +933,8 @@ int main(void) {
           setpointVelocityOut,
           setpointAccelerationOut,
           speedAvg,
+          motorControllerSpeedErrorOut,
+          (unsigned)motorControllerSaturatedOut,
           (unsigned)setpointSlipGapClampActive,
           (unsigned)intentZeroLatchElapsedMsOut,
           (unsigned)intentZeroLatchReleasedOut);
@@ -930,7 +945,7 @@ int main(void) {
           process_debug();
         #else
           InputDecodePair inputDecodePair = InputDecode_BuildPair(input1[inIdx].raw, input2[inIdx].raw, cmdL, cmdR);
-          printf("in1:%i in2:%i rawLong:%i longOff:%i rawMinusOff:%i uCmd:%i cmdEff:%i arm:%d blk:%d nz:%u calibA:%u calibL:%u calibI:%u vIntent:%i iMode:%u zLatchMs:%u zRel:%u vSp:%i aSp:%i slip:%u cmdL:%i cmdR:%i ErrL:%u ErrR:%u BatADC:%i BatV:%i TempADC:%i Temp:%i StallL_t:%u StallR_t:%u StallSup:%u CtrlMode:%u\r\n",
+          printf("in1:%i in2:%i rawLong:%i longOff:%i rawMinusOff:%i uCmd:%i cmdEff:%i arm:%d blk:%d nz:%u calibA:%u calibL:%u calibI:%u vIntent:%i iMode:%u zLatchMs:%u zRel:%u vSp:%i aSp:%i vErr:%i vSat:%u slip:%u cmdL:%i cmdR:%i ErrL:%u ErrR:%u BatADC:%i BatV:%i TempADC:%i Temp:%i StallL_t:%u StallR_t:%u StallSup:%u CtrlMode:%u\r\n",
             inputDecodePair.raw1,     // 1: INPUT1
             inputDecodePair.raw2,     // 2: INPUT2
             longitudinalRawCmd,
@@ -950,6 +965,8 @@ int main(void) {
             (unsigned)intentZeroLatchReleasedOut,
             setpointVelocityOut,
             setpointAccelerationOut,
+            motorControllerSpeedErrorOut,
+            (unsigned)motorControllerSaturatedOut,
             (unsigned)setpointSlipGapClampActive,
             inputDecodePair.cmd1,
             inputDecodePair.cmd2,
