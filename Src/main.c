@@ -283,7 +283,8 @@ int main(void) {
     uint8_t setpointSlipGapClampActive = 0U;
     int16_t motorControllerSpeedErrorOut = 0;
     uint8_t motorControllerSaturatedOut = 0U;
-    int32_t troubleshootingVelIntegrator = 0;
+    int32_t troubleshootingVelIntegratorLeft = 0;
+    int32_t troubleshootingVelIntegratorRight = 0;
     int16_t cmdL_adj = 0;
     int16_t cmdR_adj = 0;
   #endif
@@ -427,7 +428,8 @@ int main(void) {
         IntentStateMachine_Reset(&intentStateMachineState);
         VelocitySetpointLayer_Reset(&velocitySetpointLayerState);
         MotorController_Reset(&motorControllerState);
-        troubleshootingVelIntegrator = 0;
+        troubleshootingVelIntegratorLeft = 0;
+        troubleshootingVelIntegratorRight = 0;
         DriveControl_ResetStallDecay(&stallDecayStateLeft);
         DriveControl_ResetStallDecay(&stallDecayStateRight);
         enable = 1;                       // enable motors
@@ -539,7 +541,8 @@ int main(void) {
         IntentStateMachine_Reset(&intentStateMachineState);
         VelocitySetpointLayer_Reset(&velocitySetpointLayerState);
         MotorController_Reset(&motorControllerState);
-        troubleshootingVelIntegrator = 0;
+        troubleshootingVelIntegratorLeft = 0;
+        troubleshootingVelIntegratorRight = 0;
         DriveControl_ResetStallDecay(&stallDecayStateLeft);
         DriveControl_ResetStallDecay(&stallDecayStateRight);
         WheelCommandSupervisor_Init(&wheelCommandSupervisorState);
@@ -550,18 +553,26 @@ int main(void) {
        * - Keep command filter ownership (offset + smoothing)
        * - Map longitudinal input [-1000..1000] to velocity setpoint [rpm]
        * - Apply a PI regulator to produce torque command
-       * - Keep steering/mixing disabled (both wheels get same torque)
+       * - Keep steering/mixing disabled (independent per-wheel PI torque loops)
        */
       {
         int16_t speedMaxRpm = (int16_t)(rtP_Left.n_max >> 4);
         int32_t velSetpointRpmFixdt;
         int16_t velSetpointRpm;
-        int16_t speedErrorRpm;
-        int32_t pTerm;
-        int32_t iCandidate;
-        int32_t torqueCmdUnsat;
-        int16_t torqueCmdSat;
-        uint8_t saturated;
+        int16_t speedErrorRpmLeft;
+        int16_t speedErrorRpmRight;
+        int16_t measuredSpeedLeft;
+        int16_t measuredSpeedRight;
+        int32_t pTermLeft;
+        int32_t pTermRight;
+        int32_t iCandidateLeft;
+        int32_t iCandidateRight;
+        int32_t torqueCmdUnsatLeft;
+        int32_t torqueCmdUnsatRight;
+        int16_t torqueCmdSatLeft;
+        int16_t torqueCmdSatRight;
+        uint8_t saturatedLeft;
+        uint8_t saturatedRight;
 
         if (speedMaxRpm <= 0) {
           speedMaxRpm = SETPOINT_SPEED_MAX_RPM_FALLBACK;
@@ -569,38 +580,71 @@ int main(void) {
 
         velSetpointRpmFixdt = (int32_t)speed * (int32_t)speedMaxRpm;
         velSetpointRpm = (int16_t)(velSetpointRpmFixdt / 1000);
-        speedErrorRpm = (int16_t)(velSetpointRpm - speedAvg);
 
-        pTerm = ((int32_t)speedErrorRpm * (int32_t)MOTOR_CTRL_VEL_KP_Q15) >> 15;
-        iCandidate = troubleshootingVelIntegrator + ((((int32_t)speedErrorRpm * (int32_t)MOTOR_CTRL_VEL_KI_Q15) >> 15));
-        if (iCandidate > MOTOR_CTRL_INT_LIM) {
-          iCandidate = MOTOR_CTRL_INT_LIM;
-        } else if (iCandidate < -MOTOR_CTRL_INT_LIM) {
-          iCandidate = -MOTOR_CTRL_INT_LIM;
+        measuredSpeedLeft = (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_LEFT);
+        measuredSpeedRight = (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_RIGHT);
+        speedErrorRpmLeft = (int16_t)(velSetpointRpm - measuredSpeedLeft);
+        speedErrorRpmRight = (int16_t)(velSetpointRpm - measuredSpeedRight);
+
+        pTermLeft = ((int32_t)speedErrorRpmLeft * (int32_t)MOTOR_CTRL_VEL_KP_Q15) >> 15;
+        pTermRight = ((int32_t)speedErrorRpmRight * (int32_t)MOTOR_CTRL_VEL_KP_Q15) >> 15;
+
+        iCandidateLeft = troubleshootingVelIntegratorLeft + ((((int32_t)speedErrorRpmLeft * (int32_t)MOTOR_CTRL_VEL_KI_Q15) >> 15));
+        iCandidateRight = troubleshootingVelIntegratorRight + ((((int32_t)speedErrorRpmRight * (int32_t)MOTOR_CTRL_VEL_KI_Q15) >> 15));
+
+        if (iCandidateLeft > MOTOR_CTRL_INT_LIM) {
+          iCandidateLeft = MOTOR_CTRL_INT_LIM;
+        } else if (iCandidateLeft < -MOTOR_CTRL_INT_LIM) {
+          iCandidateLeft = -MOTOR_CTRL_INT_LIM;
         }
 
-        torqueCmdUnsat = pTerm + iCandidate;
-        if (torqueCmdUnsat > MOTOR_CTRL_TORQUE_MAX) {
-          torqueCmdSat = MOTOR_CTRL_TORQUE_MAX;
-        } else if (torqueCmdUnsat < -MOTOR_CTRL_TORQUE_MAX) {
-          torqueCmdSat = -MOTOR_CTRL_TORQUE_MAX;
+        if (iCandidateRight > MOTOR_CTRL_INT_LIM) {
+          iCandidateRight = MOTOR_CTRL_INT_LIM;
+        } else if (iCandidateRight < -MOTOR_CTRL_INT_LIM) {
+          iCandidateRight = -MOTOR_CTRL_INT_LIM;
+        }
+
+        torqueCmdUnsatLeft = pTermLeft + iCandidateLeft;
+        torqueCmdUnsatRight = pTermRight + iCandidateRight;
+
+        if (torqueCmdUnsatLeft > MOTOR_CTRL_TORQUE_MAX) {
+          torqueCmdSatLeft = MOTOR_CTRL_TORQUE_MAX;
+        } else if (torqueCmdUnsatLeft < -MOTOR_CTRL_TORQUE_MAX) {
+          torqueCmdSatLeft = -MOTOR_CTRL_TORQUE_MAX;
         } else {
-          torqueCmdSat = (int16_t)torqueCmdUnsat;
-        }
-        saturated = (uint8_t)(torqueCmdUnsat != (int32_t)torqueCmdSat);
-
-        if ((saturated == 0U) ||
-            ((torqueCmdSat >= MOTOR_CTRL_TORQUE_MAX) && (speedErrorRpm < 0)) ||
-            ((torqueCmdSat <= -MOTOR_CTRL_TORQUE_MAX) && (speedErrorRpm > 0))) {
-          troubleshootingVelIntegrator = iCandidate;
+          torqueCmdSatLeft = (int16_t)torqueCmdUnsatLeft;
         }
 
-        speed = torqueCmdSat;
+        if (torqueCmdUnsatRight > MOTOR_CTRL_TORQUE_MAX) {
+          torqueCmdSatRight = MOTOR_CTRL_TORQUE_MAX;
+        } else if (torqueCmdUnsatRight < -MOTOR_CTRL_TORQUE_MAX) {
+          torqueCmdSatRight = -MOTOR_CTRL_TORQUE_MAX;
+        } else {
+          torqueCmdSatRight = (int16_t)torqueCmdUnsatRight;
+        }
+
+        saturatedLeft = (uint8_t)(torqueCmdUnsatLeft != (int32_t)torqueCmdSatLeft);
+        saturatedRight = (uint8_t)(torqueCmdUnsatRight != (int32_t)torqueCmdSatRight);
+
+        if ((saturatedLeft == 0U) ||
+            ((torqueCmdSatLeft >= MOTOR_CTRL_TORQUE_MAX) && (speedErrorRpmLeft < 0)) ||
+            ((torqueCmdSatLeft <= -MOTOR_CTRL_TORQUE_MAX) && (speedErrorRpmLeft > 0))) {
+          troubleshootingVelIntegratorLeft = iCandidateLeft;
+        }
+
+        if ((saturatedRight == 0U) ||
+            ((torqueCmdSatRight >= MOTOR_CTRL_TORQUE_MAX) && (speedErrorRpmRight < 0)) ||
+            ((torqueCmdSatRight <= -MOTOR_CTRL_TORQUE_MAX) && (speedErrorRpmRight > 0))) {
+          troubleshootingVelIntegratorRight = iCandidateRight;
+        }
+
+        cmdL = torqueCmdSatLeft;
+        cmdR = torqueCmdSatRight;
 
         setpointVelocityOut = velSetpointRpm;
         setpointAccelerationOut = 0;
-        motorControllerSpeedErrorOut = speedErrorRpm;
-        motorControllerSaturatedOut = saturated;
+        motorControllerSpeedErrorOut = (int16_t)((speedErrorRpmLeft + speedErrorRpmRight) / 2);
+        motorControllerSaturatedOut = (uint8_t)(saturatedLeft || saturatedRight);
       }
 
       intentVelocityOut = setpointVelocityOut;
@@ -616,8 +660,6 @@ int main(void) {
       setpointSlipGapClampActive = 0U;
 
       steer = 0;
-      cmdL = speed;
-      cmdR = speed;
 
 
       cmdL_adj = cmdL;
