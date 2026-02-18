@@ -260,6 +260,8 @@ int main(void) {
     int16_t setpointVelocityOut = 0;
     uint8_t setpointSlipGapClampActive = 0U;
     int16_t debugTorqueAppliedOut = 0;
+    int16_t debugTorquePreSlipOut = 0;
+    int16_t debugSpeedErrOut = 0;
     int16_t cmdL_adj = 0;
     int16_t cmdR_adj = 0;
   #endif
@@ -526,11 +528,13 @@ int main(void) {
                                                        speedMaxRpm,
                                                        longitudinalRampUpRate,
                                                        longitudinalRampDownRate);
+          debugTorquePreSlipOut = speed;
           speed = DriveControl_ApplySlipSoftLimit(speed,
                                                   setpointSlipGapClampActive,
                                                   SOFT_LIMIT_TORQUE_WHEN_SLIP);
         } else {
           DriveControl_ResetLongitudinal(&driveControlLongitudinalState);
+          debugTorquePreSlipOut = 0;
         }
       }
 
@@ -724,10 +728,11 @@ int main(void) {
         #else
           int32_t vSpMmps = Debug_RpmToMilliMetersPerSecond(setpointVelocityOut);
           int32_t vActMmps = Debug_RpmToMilliMetersPerSecond(speedAvg);
+          debugSpeedErrOut = (int16_t)(setpointVelocityOut - speedAvg);
           int32_t vSpAbs = (vSpMmps >= 0) ? vSpMmps : -vSpMmps;
           int32_t vActAbs = (vActMmps >= 0) ? vActMmps : -vActMmps;
 
-          printf("Dbg uCmd:%d vSp:%s%ld.%03ldm/s vAct:%s%ld.%03ldm/s trq:%d\r\n",
+          printf("Dbg uCmd:%d vSp:%s%ld.%03ldm/s vAct:%s%ld.%03ldm/s e:%d trqPI:%d iTerm:%d slip:%u stL:%u stR:%u trqOut:%d\r\n",
             intentCmdEffOut,
             (vSpMmps < 0) ? "-" : "",
             (long)(vSpAbs / 1000),
@@ -735,6 +740,12 @@ int main(void) {
             (vActMmps < 0) ? "-" : "",
             (long)(vActAbs / 1000),
             (long)(vActAbs % 1000),
+            debugSpeedErrOut,
+            debugTorquePreSlipOut,
+            driveControlLongitudinalState.speedIntegratorCmd,
+            (unsigned)setpointSlipGapClampActive,
+            (unsigned)stallDecayStateLeft.stallTimerMs,
+            (unsigned)stallDecayStateRight.stallTimerMs,
             debugTorqueAppliedOut);
         #endif
       }
