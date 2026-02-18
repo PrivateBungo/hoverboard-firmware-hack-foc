@@ -97,9 +97,10 @@ In this architecture, neutral offset learning lives in the input-facing Command 
 
 ### Setpoint architecture rollout status
 
-- Step A is complete with active command filtering ownership: neutral offset learning now runs in `command_filter` close to raw input.
-- Step B is active: `DRIVE_FORWARD`/`DRIVE_REVERSE`/`ZERO_LATCH` intent-state behavior is enabled, with user-intent hysteresis (50 on / 35 off) and debug telemetry fields (`iMode`, `zLatchMs`, `zRel`) for deterministic bench validation. `ZERO_LATCH` arm/activate/release decisions are based on measured speed (`speedAvg`) entering/leaving near-zero, not on setpoint reaching zero.
-- Step C is active: `velocity_setpoint_layer` now enforces asymmetric trajectory shaping (slow-up / fast-down) with per-loop slew limits and a measured-speed slip-gap clamp (`slip`).
+- Step A is complete and successful: command filtering ownership is active, and neutral offset learning now runs in `command_filter` close to raw input.
+- Step B is complete and successful: `DRIVE_FORWARD`/`DRIVE_REVERSE`/`ZERO_LATCH` intent-state behavior is enabled, with user-intent hysteresis (50 on / 35 off) and debug telemetry fields (`iMode`, `zLatchMs`, `zRel`) for deterministic bench validation. `ZERO_LATCH` arm/activate/release decisions are based on measured speed (`speedAvg`) entering/leaving near-zero, not on setpoint reaching zero.
+- Step C is complete and successful: `velocity_setpoint_layer` now enforces asymmetric trajectory shaping (slow-up / fast-down) with per-loop slew limits and a measured-speed slip-gap clamp (`slip`).
+- Step D (outer velocity PID/PI controller that maps `v_sp` to torque request in main loop) is **not implemented yet** and remains pending by design.
 
 
 ### Neutral offset calibration behavior (current implementation)
