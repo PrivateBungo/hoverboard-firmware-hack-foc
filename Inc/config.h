@@ -130,6 +130,11 @@
 #define LONG_RAMP_DOWN_NUM       2         // [-] numerator for down-ramp scaling vs up-ramp (2x faster down than up)
 #define LONG_RAMP_DOWN_DEN       1         // [-] denominator for down-ramp scaling vs up-ramp
 
+// Velocity setpoint shaping (Step C: jerk/asymmetric trajectory shaping)
+#define SETPOINT_RATE_UP         5         // [-] per-loop max increase for velocity setpoint (softer throttle build-up)
+#define SETPOINT_RATE_DOWN       10        // [-] per-loop max decrease for velocity setpoint (faster release/braking response)
+#define SETPOINT_SLIP_GAP_MAX    300       // [-] max |v_set - v_actual| gap before clamping to reduce wheel-slip transients
+
 // Wheel command supervisor (post-mixer, pre-FOC)
 // The LPF coefficient below is tuned so a full step reaches ~90% in ~1000 ms at ~5 ms loop cadence.
 #define WHEEL_CMD_FILTER_COEF    750       // [-] fixdt(0,16,16) low-pass filter coefficient [0..65535], lower value = softer command ramp

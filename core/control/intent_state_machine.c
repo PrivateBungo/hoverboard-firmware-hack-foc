@@ -35,6 +35,7 @@ static int16_t IntentStateMachine_ApplyCommandDeadband(int16_t cmd) {
   return cmd;
 }
 
+/* near_zero is derived strictly from measured speed (speed_actual), never from setpoint/intent. */
 static void IntentStateMachine_UpdateNearZero(IntentStateMachineState *state, int16_t speed_actual) {
   int16_t speed_abs = (int16_t)abs(speed_actual);
 
@@ -102,6 +103,7 @@ void IntentStateMachine_Update(IntentStateMachineState *state,
     state->armed_sign = 0;
   }
 
+  /* ZERO_LATCH activates only when measured speed enters near-zero after a reversal was armed. */
   if ((state->blocked_sign == 0) && (state->armed_sign != 0) && (state->near_zero != 0U)) {
     state->blocked_sign = state->armed_sign;
     state->armed_sign = 0;

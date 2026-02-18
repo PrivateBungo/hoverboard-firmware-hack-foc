@@ -12,7 +12,7 @@ Table of Contents
 =======================
 
 * **Wiki:** please check the wiki pages for [Getting Started](https://github.com/EFeru/hoverboard-firmware-hack-FOC/wiki#getting-started) and for [Troubleshooting](https://github.com/EFeru/hoverboard-firmware-hack-FOC/wiki#troubleshooting)
-* [Quick build + flash script](#quick-build--flash-script)
+* [Build / flash helper scripts](#build--flash-helper-scripts)
 * [Control Architecture Layers (User Intent vs Torque Domain)](#control-architecture-layers-user-intent-vs-torque-domain)
 * [Hardware](#hardware)
 * [FOC Firmware](#foc-firmware)
@@ -41,15 +41,24 @@ Table of Contents
 
 
 ---
-## Quick build + flash script
+## Build / flash helper scripts
 
-Run this to pull latest changes, clean, build, and flash in one go:
+You now have three top-level executables:
 
-```bash
-./fw-update.sh
-```
+- Build only (pull + clean + build):
+  ```bash
+  ./fw-build.sh
+  ```
+- Flash only (flash existing ELF):
+  ```bash
+  ./fw-flash.sh
+  ```
+- Build + flash (pull + clean + build + flash):
+  ```bash
+  ./fw-update.sh
+  ```
 
-The script uses these defaults (overridable via env vars):
+Flash scripts use these defaults (overridable via env vars):
 
 - `PROGRAMMER_CLI=/home/gijs/STMicroelectronics/STM32Cube/STM32CubeProgrammer/bin/STM32_Programmer_CLI`
 - `FIRMWARE_ELF=/home/gijs/Documents/hoverboard-firmware-hack-foc/build/hover.elf`
@@ -57,6 +66,7 @@ The script uses these defaults (overridable via env vars):
 Example with custom paths:
 
 ```bash
+PROGRAMMER_CLI=/path/to/STM32_Programmer_CLI FIRMWARE_ELF=/path/to/build/hover.elf ./fw-flash.sh
 PROGRAMMER_CLI=/path/to/STM32_Programmer_CLI FIRMWARE_ELF=/path/to/build/hover.elf ./fw-update.sh
 ```
 
@@ -90,8 +100,8 @@ In this architecture, neutral offset learning lives in the input-facing Command 
 ### Setpoint architecture rollout status
 
 - Step A is complete with active command filtering ownership: neutral offset learning now runs in `command_filter` close to raw input.
-- Step B is active: `DRIVE_FORWARD`/`DRIVE_REVERSE`/`ZERO_LATCH` intent-state behavior is enabled, with user-intent hysteresis (50 on / 35 off) and debug telemetry fields (`iMode`, `zLatchMs`, `zRel`) for deterministic bench validation.
-- Step C (jerk/asymmetric trajectory shaping) remains intentionally pending.
+- Step B is active: `DRIVE_FORWARD`/`DRIVE_REVERSE`/`ZERO_LATCH` intent-state behavior is enabled, with user-intent hysteresis (50 on / 35 off) and debug telemetry fields (`iMode`, `zLatchMs`, `zRel`) for deterministic bench validation. `ZERO_LATCH` arm/activate/release decisions are based on measured speed (`speedAvg`) entering/leaving near-zero, not on setpoint reaching zero.
+- Step C is active: `velocity_setpoint_layer` now enforces asymmetric trajectory shaping (slow-up / fast-down) with per-loop slew limits and a measured-speed slip-gap clamp (`slip`).
 
 ### Housekeeping rules
 
