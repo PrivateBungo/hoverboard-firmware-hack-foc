@@ -583,6 +583,22 @@ int main(void) {
 
         measuredSpeedLeft = (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_LEFT);
         measuredSpeedRight = (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_RIGHT);
+
+        /*
+         * Convert wheel-speed feedback to the same vehicle-forward sign convention used by calcAvgSpeed().
+         * This keeps per-wheel PI feedback polarity aligned with command polarity.
+         */
+        #if defined(INVERT_L_DIRECTION)
+          measuredSpeedLeft = -measuredSpeedLeft;
+        #endif
+        #if !defined(INVERT_R_DIRECTION)
+          measuredSpeedRight = -measuredSpeedRight;
+        #endif
+        if (SPEED_COEFFICIENT & (1 << 16)) {
+          measuredSpeedLeft = -measuredSpeedLeft;
+          measuredSpeedRight = -measuredSpeedRight;
+        }
+
         speedErrorRpmLeft = (int16_t)(velSetpointRpm - measuredSpeedLeft);
         speedErrorRpmRight = (int16_t)(velSetpointRpm - measuredSpeedRight);
 
