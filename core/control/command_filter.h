@@ -21,6 +21,8 @@ typedef struct {
   uint16_t stable_count;
   uint16_t boot_elapsed_ms;
   uint16_t boot_samples;
+  int32_t cmd_lpf_fixdt;
+  uint8_t cmd_lpf_initialized;
   uint8_t learning_zone;
   uint8_t locked;
   uint8_t boot_calibrated;

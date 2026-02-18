@@ -38,6 +38,10 @@
 #include "motor_controller.h"
 #include "input_supervisor.h"
 #include "mode_supervisor.h"
+
+#define TROUBLESHOOT_ACCEL_UP_MMPS2      1000
+#define TROUBLESHOOT_ACCEL_DOWN_MMPS2    5000
+
 #include "stall_supervisor.h"
 #include "wheel_command_supervisor.h"
 #include "uart_reporting.h"
@@ -283,6 +287,9 @@ int main(void) {
     uint8_t setpointSlipGapClampActive = 0U;
     int16_t motorControllerSpeedErrorOut = 0;
     uint8_t motorControllerSaturatedOut = 0U;
+    int32_t troubleshootingVelIntegratorLeft = 0;
+    int32_t troubleshootingVelIntegratorRight = 0;
+    int16_t troubleshootingVelocitySetpointRpmActive = 0;
     int16_t cmdL_adj = 0;
     int16_t cmdR_adj = 0;
   #endif
@@ -426,6 +433,9 @@ int main(void) {
         IntentStateMachine_Reset(&intentStateMachineState);
         VelocitySetpointLayer_Reset(&velocitySetpointLayerState);
         MotorController_Reset(&motorControllerState);
+        troubleshootingVelIntegratorLeft = 0;
+        troubleshootingVelIntegratorRight = 0;
+        troubleshootingVelocitySetpointRpmActive = 0;
         DriveControl_ResetStallDecay(&stallDecayStateLeft);
         DriveControl_ResetStallDecay(&stallDecayStateRight);
         enable = 1;                       // enable motors
@@ -481,7 +491,7 @@ int main(void) {
         }
       #endif
 
-      // ####### COMMAND FILTER + USER INTENT #######
+      // ####### COMMAND FILTER (longitudinal only troubleshooting path) #######
       {
         CommandFilterOutput commandFilterOutput;
 
@@ -499,12 +509,12 @@ int main(void) {
         longitudinalRawCmd = commandFilterOutput.longitudinal_raw;
         longitudinalCenteredCmd = commandFilterOutput.longitudinal_cmd;
 
-        /* User intent layer owns command deadband/sign hysteresis policy. */
-        UserIntent_BuildLongitudinalSteeringIntent(&userIntentState,
-                                                   commandFilterOutput.steering_cmd,
-                                                   commandFilterOutput.longitudinal_cmd,
-                                                   &steer,
-                                                   &speed);
+        /*
+         * Troubleshooting mode: bypass user-intent shaping and use only
+         * longitudinal command directly as torque request.
+         */
+        steer = 0;
+        speed = CLAMP(commandFilterOutput.longitudinal_cmd, -1000, 1000);
         userIntentLongitudinalOut = speed;
       }
 
@@ -537,68 +547,186 @@ int main(void) {
         IntentStateMachine_Reset(&intentStateMachineState);
         VelocitySetpointLayer_Reset(&velocitySetpointLayerState);
         MotorController_Reset(&motorControllerState);
+        troubleshootingVelIntegratorLeft = 0;
+        troubleshootingVelIntegratorRight = 0;
+        troubleshootingVelocitySetpointRpmActive = 0;
         DriveControl_ResetStallDecay(&stallDecayStateLeft);
         DriveControl_ResetStallDecay(&stallDecayStateRight);
         WheelCommandSupervisor_Init(&wheelCommandSupervisorState);
       }
 
+      /*
+       * Troubleshooting mode: simple velocity loop.
+       * - Keep command filter ownership (offset + smoothing)
+       * - Map longitudinal input [-1000..1000] to velocity setpoint [rpm]
+       * - Apply a PI regulator to produce torque command
+       * - Keep steering/mixing disabled (independent per-wheel PI torque loops)
+       */
       {
-        IntentStateMachineOutput intentStateMachineOutput;
-        VelocitySetpointLayerOutput velocitySetpointLayerOutput;
+        int16_t speedMaxRpm = (int16_t)(rtP_Left.n_max >> 4);
+        int32_t velSetpointRpmFixdt;
+        int16_t velSetpointRpm;
+        int16_t setpointDeltaRpm;
+        int16_t speedErrorRpmLeft;
+        int16_t speedErrorRpmRight;
+        int16_t measuredSpeedLeft;
+        int16_t measuredSpeedRight;
+        int32_t pTermLeft;
+        int32_t pTermRight;
+        int32_t iCandidateLeft;
+        int32_t iCandidateRight;
+        int32_t torqueCmdUnsatLeft;
+        int32_t torqueCmdUnsatRight;
+        int16_t torqueCmdSatLeft;
+        int16_t torqueCmdSatRight;
+        uint8_t saturatedLeft;
+        uint8_t saturatedRight;
 
-        IntentStateMachine_Update(&intentStateMachineState,
-                                  speed,
-                                  speedAvg,
-                                  &intentStateMachineOutput);
+        if (speedMaxRpm <= 0) {
+          speedMaxRpm = SETPOINT_SPEED_MAX_RPM_FALLBACK;
+        }
 
-        VelocitySetpointLayer_Update(&velocitySetpointLayerState,
-                                     intentStateMachineOutput.velocity_intent,
-                                     speedAvg,
-                                     (int16_t)(rtP_Left.n_max >> 4),
-                                     &velocitySetpointLayerOutput);
+        velSetpointRpmFixdt = (int32_t)speed * (int32_t)speedMaxRpm;
+        velSetpointRpm = (int16_t)(velSetpointRpmFixdt / 1000);
 
-        intentVelocityOut = intentStateMachineOutput.velocity_intent;
-        intentCmdEffOut = intentStateMachineOutput.cmd_eff;
-        intentArmedSignOut = intentStateMachineOutput.armed_sign;
-        intentBlockedSignOut = intentStateMachineOutput.blocked_sign;
-        intentNearZeroOut = intentStateMachineOutput.near_zero;
-        intentModeOut = (uint8_t)intentStateMachineOutput.mode;
-        intentZeroLatchElapsedMsOut = intentStateMachineOutput.zero_latch_elapsed_ms;
-        intentZeroLatchReleasedOut = intentStateMachineOutput.zero_latch_released;
-        intentZeroLatchArmedOut = intentStateMachineOutput.zero_latch_armed;
-        intentZeroLatchActivatedOut = intentStateMachineOutput.zero_latch_activated;
-        setpointVelocityOut = velocitySetpointLayerOutput.velocity_setpoint;
-        setpointAccelerationOut = velocitySetpointLayerOutput.acceleration_setpoint;
-        setpointSlipGapClampActive = velocitySetpointLayerOutput.slip_gap_clamp_active;
-        speed = velocitySetpointLayerOutput.velocity_setpoint;
+        {
+          int32_t deltaSetpoint = (int32_t)velSetpointRpm - (int32_t)troubleshootingVelocitySetpointRpmActive;
+          int32_t accelUpRpmPerLoop;
+          int32_t accelDownRpmPerLoop;
+          int32_t rampStep;
+
+          accelUpRpmPerLoop = ((int32_t)TROUBLESHOOT_ACCEL_UP_MMPS2 * 60 * (int32_t)(DELAY_IN_MAIN_LOOP + 1U)) /
+                              ((int32_t)SETPOINT_WHEEL_CIRCUMFERENCE_MM * 1000);
+          accelDownRpmPerLoop = ((int32_t)TROUBLESHOOT_ACCEL_DOWN_MMPS2 * 60 * (int32_t)(DELAY_IN_MAIN_LOOP + 1U)) /
+                                ((int32_t)SETPOINT_WHEEL_CIRCUMFERENCE_MM * 1000);
+
+          if (accelUpRpmPerLoop < 1) {
+            accelUpRpmPerLoop = 1;
+          }
+          if (accelDownRpmPerLoop < 1) {
+            accelDownRpmPerLoop = 1;
+          }
+
+          if (deltaSetpoint != 0) {
+            int32_t activeAbs = (troubleshootingVelocitySetpointRpmActive >= 0) ?
+                                 troubleshootingVelocitySetpointRpmActive : -troubleshootingVelocitySetpointRpmActive;
+            int32_t targetAbs = (velSetpointRpm >= 0) ? velSetpointRpm : -velSetpointRpm;
+            uint8_t sameDirection = (uint8_t)((troubleshootingVelocitySetpointRpmActive == 0) ||
+                                              ((troubleshootingVelocitySetpointRpmActive > 0) == (velSetpointRpm > 0)));
+            uint8_t isRampUp = (uint8_t)(sameDirection && (targetAbs > activeAbs));
+            int32_t stepLimit = isRampUp ? accelUpRpmPerLoop : accelDownRpmPerLoop;
+
+            if (deltaSetpoint > 0) {
+              rampStep = (deltaSetpoint > stepLimit) ? stepLimit : deltaSetpoint;
+            } else {
+              int32_t decelStep = -deltaSetpoint;
+              rampStep = (decelStep > stepLimit) ? -stepLimit : deltaSetpoint;
+            }
+          } else {
+            rampStep = 0;
+          }
+
+          setpointDeltaRpm = (int16_t)rampStep;
+          troubleshootingVelocitySetpointRpmActive = (int16_t)CLAMP((int16_t)((int32_t)troubleshootingVelocitySetpointRpmActive + rampStep),
+                                                                     -speedMaxRpm,
+                                                                     speedMaxRpm);
+        }
+
+        measuredSpeedLeft = (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_LEFT);
+        measuredSpeedRight = (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_RIGHT);
+
+        /*
+         * Convert wheel-speed feedback to the same vehicle-forward sign convention used by calcAvgSpeed().
+         * This keeps per-wheel PI feedback polarity aligned with command polarity.
+         */
+        #if defined(INVERT_L_DIRECTION)
+          measuredSpeedLeft = -measuredSpeedLeft;
+        #endif
+        #if !defined(INVERT_R_DIRECTION)
+          measuredSpeedRight = -measuredSpeedRight;
+        #endif
+        if (SPEED_COEFFICIENT & (1 << 16)) {
+          measuredSpeedLeft = -measuredSpeedLeft;
+          measuredSpeedRight = -measuredSpeedRight;
+        }
+
+        speedErrorRpmLeft = (int16_t)(troubleshootingVelocitySetpointRpmActive - measuredSpeedLeft);
+        speedErrorRpmRight = (int16_t)(troubleshootingVelocitySetpointRpmActive - measuredSpeedRight);
+
+        pTermLeft = ((int32_t)speedErrorRpmLeft * (int32_t)MOTOR_CTRL_VEL_KP_Q15) >> 15;
+        pTermRight = ((int32_t)speedErrorRpmRight * (int32_t)MOTOR_CTRL_VEL_KP_Q15) >> 15;
+
+        iCandidateLeft = troubleshootingVelIntegratorLeft + ((((int32_t)speedErrorRpmLeft * (int32_t)MOTOR_CTRL_VEL_KI_Q15) >> 15));
+        iCandidateRight = troubleshootingVelIntegratorRight + ((((int32_t)speedErrorRpmRight * (int32_t)MOTOR_CTRL_VEL_KI_Q15) >> 15));
+
+        if (iCandidateLeft > MOTOR_CTRL_INT_LIM) {
+          iCandidateLeft = MOTOR_CTRL_INT_LIM;
+        } else if (iCandidateLeft < -MOTOR_CTRL_INT_LIM) {
+          iCandidateLeft = -MOTOR_CTRL_INT_LIM;
+        }
+
+        if (iCandidateRight > MOTOR_CTRL_INT_LIM) {
+          iCandidateRight = MOTOR_CTRL_INT_LIM;
+        } else if (iCandidateRight < -MOTOR_CTRL_INT_LIM) {
+          iCandidateRight = -MOTOR_CTRL_INT_LIM;
+        }
+
+        torqueCmdUnsatLeft = pTermLeft + iCandidateLeft;
+        torqueCmdUnsatRight = pTermRight + iCandidateRight;
+
+        if (torqueCmdUnsatLeft > MOTOR_CTRL_TORQUE_MAX) {
+          torqueCmdSatLeft = MOTOR_CTRL_TORQUE_MAX;
+        } else if (torqueCmdUnsatLeft < -MOTOR_CTRL_TORQUE_MAX) {
+          torqueCmdSatLeft = -MOTOR_CTRL_TORQUE_MAX;
+        } else {
+          torqueCmdSatLeft = (int16_t)torqueCmdUnsatLeft;
+        }
+
+        if (torqueCmdUnsatRight > MOTOR_CTRL_TORQUE_MAX) {
+          torqueCmdSatRight = MOTOR_CTRL_TORQUE_MAX;
+        } else if (torqueCmdUnsatRight < -MOTOR_CTRL_TORQUE_MAX) {
+          torqueCmdSatRight = -MOTOR_CTRL_TORQUE_MAX;
+        } else {
+          torqueCmdSatRight = (int16_t)torqueCmdUnsatRight;
+        }
+
+        saturatedLeft = (uint8_t)(torqueCmdUnsatLeft != (int32_t)torqueCmdSatLeft);
+        saturatedRight = (uint8_t)(torqueCmdUnsatRight != (int32_t)torqueCmdSatRight);
+
+        if ((saturatedLeft == 0U) ||
+            ((torqueCmdSatLeft >= MOTOR_CTRL_TORQUE_MAX) && (speedErrorRpmLeft < 0)) ||
+            ((torqueCmdSatLeft <= -MOTOR_CTRL_TORQUE_MAX) && (speedErrorRpmLeft > 0))) {
+          troubleshootingVelIntegratorLeft = iCandidateLeft;
+        }
+
+        if ((saturatedRight == 0U) ||
+            ((torqueCmdSatRight >= MOTOR_CTRL_TORQUE_MAX) && (speedErrorRpmRight < 0)) ||
+            ((torqueCmdSatRight <= -MOTOR_CTRL_TORQUE_MAX) && (speedErrorRpmRight > 0))) {
+          troubleshootingVelIntegratorRight = iCandidateRight;
+        }
+
+        cmdL = torqueCmdSatLeft;
+        cmdR = torqueCmdSatRight;
+
+        setpointVelocityOut = troubleshootingVelocitySetpointRpmActive;
+        setpointAccelerationOut = setpointDeltaRpm;
+        motorControllerSpeedErrorOut = (int16_t)((speedErrorRpmLeft + speedErrorRpmRight) / 2);
+        motorControllerSaturatedOut = (uint8_t)(saturatedLeft || saturatedRight);
       }
 
-      {
-        MotorControllerOutput motorControllerOutput;
-        uint8_t trqModeEnabled = (uint8_t)(modeSupervisorState.selected_mode == TRQ_MODE);
+      intentVelocityOut = setpointVelocityOut;
+      intentCmdEffOut = setpointVelocityOut;
+      intentArmedSignOut = (setpointVelocityOut > 0) - (setpointVelocityOut < 0);
+      intentBlockedSignOut = 0;
+      intentNearZeroOut = (uint8_t)(ABS(setpointVelocityOut) <= 10);
+      intentModeOut = (uint8_t)INTENT_STATE_MACHINE_DRIVE_FORWARD;
+      intentZeroLatchElapsedMsOut = 0U;
+      intentZeroLatchReleasedOut = 0U;
+      intentZeroLatchArmedOut = 0U;
+      intentZeroLatchActivatedOut = 0U;
+      setpointSlipGapClampActive = 0U;
 
-        MotorController_Update(&motorControllerState,
-                               speed,
-                               speedAvg,
-                               (int16_t)(rtP_Left.n_max >> 4),
-                               trqModeEnabled,
-                               &motorControllerOutput);
-
-        motorControllerSpeedErrorOut = motorControllerOutput.speed_error_rpm;
-        motorControllerSaturatedOut = motorControllerOutput.saturated;
-        speed = motorControllerOutput.torque_cmd;
-        speed = DriveControl_ApplySlipSoftLimit(speed,
-                                                setpointSlipGapClampActive,
-                                                SOFT_LIMIT_TORQUE_WHEN_SLIP);
-      }
-
-      /* Debug simplification: temporarily disable steering contribution so longitudinal tuning is isolated. */
       steer = 0;
-
-      /* Torque-domain stage: intent-to-wheel torque mapping/mixing. */
-      DriveControl_MixCommands(speed, steer, &cmdL, &cmdR);
-
-      WheelCommandSupervisor_Update(&wheelCommandSupervisorState, cmdL, cmdR, &cmdL, &cmdR);
 
 
       cmdL_adj = cmdL;
