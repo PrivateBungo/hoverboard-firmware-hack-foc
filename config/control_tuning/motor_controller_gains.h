@@ -11,12 +11,12 @@
  */
 
 // Outer velocity PI gains in Q15 fixed-point.
-#define LONG_SPEED_KP_Q15                 32768   // [-] 1.000 P gain from normalized speed error to torque request
-#define LONG_SPEED_KI_Q15                 4096    // [-] 0.125 I gain per main-loop update (5 ms nominal)
+#define LONG_SPEED_KP_Q15                 40960   // [-] 1.250 P gain from normalized speed error to torque request
+#define LONG_SPEED_KI_Q15                 8192    // [-] 0.250 I gain per main-loop update (5 ms nominal)
 
 // Integrator and output limits in command units.
-#define LONG_SPEED_I_TERM_MAX             850     // [-] max positive integrator contribution
-#define LONG_SPEED_I_TERM_MIN            -850     // [-] min negative integrator contribution
+#define LONG_SPEED_I_TERM_MAX            1000     // [-] max positive integrator contribution
+#define LONG_SPEED_I_TERM_MIN           -1000     // [-] min negative integrator contribution
 #define LONG_SPEED_OUTER_TORQUE_CMD_MAX  1000     // [-] outer-loop hard saturation (pre soft-limit path)
 #define LONG_SPEED_OUTER_TORQUE_CMD_MIN -1000     // [-] outer-loop hard saturation (pre soft-limit path)
 
