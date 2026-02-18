@@ -607,11 +607,21 @@ int main(void) {
             accelDownRpmPerLoop = 1;
           }
 
-          if (deltaSetpoint > 0) {
-            rampStep = (deltaSetpoint > accelUpRpmPerLoop) ? accelUpRpmPerLoop : deltaSetpoint;
-          } else if (deltaSetpoint < 0) {
-            int32_t decelStep = -deltaSetpoint;
-            rampStep = (decelStep > accelDownRpmPerLoop) ? -accelDownRpmPerLoop : deltaSetpoint;
+          if (deltaSetpoint != 0) {
+            int32_t activeAbs = (troubleshootingVelocitySetpointRpmActive >= 0) ?
+                                 troubleshootingVelocitySetpointRpmActive : -troubleshootingVelocitySetpointRpmActive;
+            int32_t targetAbs = (velSetpointRpm >= 0) ? velSetpointRpm : -velSetpointRpm;
+            uint8_t sameDirection = (uint8_t)((troubleshootingVelocitySetpointRpmActive == 0) ||
+                                              ((troubleshootingVelocitySetpointRpmActive > 0) == (velSetpointRpm > 0)));
+            uint8_t isRampUp = (uint8_t)(sameDirection && (targetAbs > activeAbs));
+            int32_t stepLimit = isRampUp ? accelUpRpmPerLoop : accelDownRpmPerLoop;
+
+            if (deltaSetpoint > 0) {
+              rampStep = (deltaSetpoint > stepLimit) ? stepLimit : deltaSetpoint;
+            } else {
+              int32_t decelStep = -deltaSetpoint;
+              rampStep = (decelStep > stepLimit) ? -stepLimit : deltaSetpoint;
+            }
           } else {
             rampStep = 0;
           }
