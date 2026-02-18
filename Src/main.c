@@ -283,6 +283,7 @@ int main(void) {
     uint8_t setpointSlipGapClampActive = 0U;
     int16_t motorControllerSpeedErrorOut = 0;
     uint8_t motorControllerSaturatedOut = 0U;
+    int32_t troubleshootingVelIntegrator = 0;
     int16_t cmdL_adj = 0;
     int16_t cmdR_adj = 0;
   #endif
@@ -426,6 +427,7 @@ int main(void) {
         IntentStateMachine_Reset(&intentStateMachineState);
         VelocitySetpointLayer_Reset(&velocitySetpointLayerState);
         MotorController_Reset(&motorControllerState);
+        troubleshootingVelIntegrator = 0;
         DriveControl_ResetStallDecay(&stallDecayStateLeft);
         DriveControl_ResetStallDecay(&stallDecayStateRight);
         enable = 1;                       // enable motors
@@ -537,6 +539,7 @@ int main(void) {
         IntentStateMachine_Reset(&intentStateMachineState);
         VelocitySetpointLayer_Reset(&velocitySetpointLayerState);
         MotorController_Reset(&motorControllerState);
+        troubleshootingVelIntegrator = 0;
         DriveControl_ResetStallDecay(&stallDecayStateLeft);
         DriveControl_ResetStallDecay(&stallDecayStateRight);
         WheelCommandSupervisor_Init(&wheelCommandSupervisorState);
@@ -546,7 +549,7 @@ int main(void) {
        * Troubleshooting mode: simple velocity loop.
        * - Keep command filter ownership (offset + smoothing)
        * - Map longitudinal input [-1000..1000] to velocity setpoint [rpm]
-       * - Apply a P-only regulator to produce torque command
+       * - Apply a PI regulator to produce torque command
        * - Keep steering/mixing disabled (both wheels get same torque)
        */
       {
@@ -554,7 +557,11 @@ int main(void) {
         int32_t velSetpointRpmFixdt;
         int16_t velSetpointRpm;
         int16_t speedErrorRpm;
-        int32_t torqueCmd;
+        int32_t pTerm;
+        int32_t iCandidate;
+        int32_t torqueCmdUnsat;
+        int16_t torqueCmdSat;
+        uint8_t saturated;
 
         if (speedMaxRpm <= 0) {
           speedMaxRpm = SETPOINT_SPEED_MAX_RPM_FALLBACK;
@@ -563,12 +570,37 @@ int main(void) {
         velSetpointRpmFixdt = (int32_t)speed * (int32_t)speedMaxRpm;
         velSetpointRpm = (int16_t)(velSetpointRpmFixdt / 1000);
         speedErrorRpm = (int16_t)(velSetpointRpm - speedAvg);
-        torqueCmd = ((int32_t)speedErrorRpm * (int32_t)MOTOR_CTRL_VEL_KP_Q15) >> 15;
-        speed = CLAMP((int16_t)torqueCmd, -MOTOR_CTRL_TORQUE_MAX, MOTOR_CTRL_TORQUE_MAX);
+
+        pTerm = ((int32_t)speedErrorRpm * (int32_t)MOTOR_CTRL_VEL_KP_Q15) >> 15;
+        iCandidate = troubleshootingVelIntegrator + ((((int32_t)speedErrorRpm * (int32_t)MOTOR_CTRL_VEL_KI_Q15) >> 15));
+        if (iCandidate > MOTOR_CTRL_INT_LIM) {
+          iCandidate = MOTOR_CTRL_INT_LIM;
+        } else if (iCandidate < -MOTOR_CTRL_INT_LIM) {
+          iCandidate = -MOTOR_CTRL_INT_LIM;
+        }
+
+        torqueCmdUnsat = pTerm + iCandidate;
+        if (torqueCmdUnsat > MOTOR_CTRL_TORQUE_MAX) {
+          torqueCmdSat = MOTOR_CTRL_TORQUE_MAX;
+        } else if (torqueCmdUnsat < -MOTOR_CTRL_TORQUE_MAX) {
+          torqueCmdSat = -MOTOR_CTRL_TORQUE_MAX;
+        } else {
+          torqueCmdSat = (int16_t)torqueCmdUnsat;
+        }
+        saturated = (uint8_t)(torqueCmdUnsat != (int32_t)torqueCmdSat);
+
+        if ((saturated == 0U) ||
+            ((torqueCmdSat >= MOTOR_CTRL_TORQUE_MAX) && (speedErrorRpm < 0)) ||
+            ((torqueCmdSat <= -MOTOR_CTRL_TORQUE_MAX) && (speedErrorRpm > 0))) {
+          troubleshootingVelIntegrator = iCandidate;
+        }
+
+        speed = torqueCmdSat;
 
         setpointVelocityOut = velSetpointRpm;
         setpointAccelerationOut = 0;
         motorControllerSpeedErrorOut = speedErrorRpm;
+        motorControllerSaturatedOut = saturated;
       }
 
       intentVelocityOut = setpointVelocityOut;
@@ -582,7 +614,6 @@ int main(void) {
       intentZeroLatchArmedOut = 0U;
       intentZeroLatchActivatedOut = 0U;
       setpointSlipGapClampActive = 0U;
-      motorControllerSaturatedOut = 0U;
 
       steer = 0;
       cmdL = speed;
