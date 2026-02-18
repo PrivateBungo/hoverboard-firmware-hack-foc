@@ -17,9 +17,13 @@
 typedef struct {
   int16_t offset;
   int16_t stable_ref;
+  int32_t boot_sum;
   uint16_t stable_count;
+  uint16_t boot_elapsed_ms;
+  uint16_t boot_samples;
   uint8_t learning_zone;
   uint8_t locked;
+  uint8_t boot_calibrated;
 } CommandFilterAxisState;
 
 typedef struct {
@@ -37,6 +41,7 @@ typedef struct {
   uint8_t longitudinal_calib_active;
   uint8_t longitudinal_calib_locked;
   uint8_t longitudinal_calib_updated;
+  uint8_t longitudinal_calib_inhibit_torque;
 } CommandFilterOutput;
 
 void CommandFilter_Init(CommandFilterState *state);

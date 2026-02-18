@@ -75,7 +75,7 @@ Convert normalized command into sharp desired velocity intent `v_intent`.
 - Braking emerges from large `Δv` in downstream setpoint/motor-control layers.
 - `ZERO_LATCH` uses directional armed→active behavior:
   - reversal while moving arms latch (braking remains natural),
-  - latch activates only at near-zero crossing and blocks only the opposite direction,
+  - latch activates only when measured speed enters near-zero (not when setpoint reaches zero) and blocks only the opposite direction,
   - latch releases after hold time at standstill or immediately if command goes neutral/other direction.
 
 ## 5. Velocity Setpoint Control Layer (1 kHz)
@@ -187,7 +187,7 @@ Scope:
 - Wire them in pass-through mode so effective behavior still matches current path.
 - Add telemetry channels for current path outputs and proposed new-layer outputs side-by-side.
 
-Implementation status (current branch):
+Implementation status (current branch): **Completed / successful**
 
 - `core/control/command_filter.*`, `core/control/intent_state_machine.*`, and `core/control/velocity_setpoint_layer.*` were added as scaffolding modules; command filter now actively owns neutral offset learning.
 - `Src/main.c` now wires these modules in the command path while preserving existing behavior (pass-through velocity setpoint).
@@ -207,7 +207,7 @@ Scope:
 - Keep legacy smoothing path for physical command shaping.
 - Log intent transitions and zero-latch timer decisions.
 
-Implementation status (current branch):
+Implementation status (current branch): **Completed / successful**
 
 - `core/control/intent_state_machine.*` now implements forward/reverse intent modes and a deterministic zero-latch handoff near standstill.
 - Hard reverse while moving now flips intent sign immediately; near-zero sign flips pass through `ZERO_LATCH` hold/release rules.
@@ -229,25 +229,50 @@ Scope:
 - Keep hard limits untouched in generated code.
 - Keep soft-limit path external to generated layer.
 
+Implementation status (current branch): **Completed / successful**
+
+- `core/control/velocity_setpoint_layer.*` is now active and no longer pass-through.
+- The setpoint layer enforces asymmetric per-loop trajectory rates (`SETPOINT_RATE_UP`, `SETPOINT_RATE_DOWN`) to realize slow-up / fast-down behavior.
+- A measured-speed slip-gap guard (`SETPOINT_SLIP_GAP_MAX`) clamps `|v_sp - v_actual|` and raises the existing `slip` telemetry flag when active.
+- `Src/main.c` feeds `speedAvg` into `VelocitySetpointLayer_Update(...)`, so shaping/guarding is anchored to measured speed.
+
 Test gate C:
 
 - `v_sp` traces show expected S-curve.
 - Emergency reverse yields strong controlled decel without mode artifacts.
 - No instability near zero crossing.
 
-### Phase D — slip-gap anti-windup + soft-limit tuning integration
+### Phase D — slip-gap policy refinement + soft-limit tuning integration
 
 Scope:
 
-- Enable `||v_sp|-|v_actual||` clamp and release policy.
+- Refine slip-gap clamp/release behavior and tune thresholds from road-test data.
 - Integrate/retune soft-limit strategy in this same phase (still outside generated hard-limit logic).
-- Finalize parameter placement in `config/control` and `config/user`.
+- Finalize parameter placement in `config/control_tuning` and `config/user`.
+
+Implementation status (current branch): **Pending**
 
 Test gate D:
 
 - Stuck-then-release scenario does not cause surge.
 - Soft-limit intervention is visible/traceable and does not weaken hard-limit safety behavior.
 - End-to-end road test matrix passes acceptance criteria.
+
+### Phase E — outer velocity PID/PI controller (main-loop speed domain)
+
+Scope:
+
+- Implement a new outer-loop velocity controller that maps `v_sp` to torque request in the main loop.
+- Keep generated high-frequency electrical/current PI/PID internals untouched.
+- Place new controller gains/limits in `config/control_tuning/motor_controller_gains.h`.
+
+Implementation status (current branch): **Not implemented yet (planned)**
+
+Test gate E:
+
+- Step response and disturbance rejection meet target behavior without oscillation.
+- Torque output saturations and anti-windup are deterministic/traceable in telemetry.
+- Integration preserves generated-code hard-limit ownership and safety behavior.
 
 ## 11. Tuning strategy (operator-focused)
 

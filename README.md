@@ -43,13 +43,21 @@ Table of Contents
 ---
 ## Quick build + flash script
 
-Run this to pull latest changes, clean, build, and flash in one go:
+Use these root scripts for explicit workflows:
+
+```bash
+./build-only.sh
+./flash-only.sh
+./combined-build-and-flash.sh
+```
+
+Compatibility alias (still supported):
 
 ```bash
 ./fw-update.sh
 ```
 
-The script uses these defaults (overridable via env vars):
+Flash scripts use these defaults (overridable via env vars):
 
 - `PROGRAMMER_CLI=/home/gijs/STMicroelectronics/STM32Cube/STM32CubeProgrammer/bin/STM32_Programmer_CLI`
 - `FIRMWARE_ELF=/home/gijs/Documents/hoverboard-firmware-hack-foc/build/hover.elf`
@@ -57,7 +65,7 @@ The script uses these defaults (overridable via env vars):
 Example with custom paths:
 
 ```bash
-PROGRAMMER_CLI=/path/to/STM32_Programmer_CLI FIRMWARE_ELF=/path/to/build/hover.elf ./fw-update.sh
+PROGRAMMER_CLI=/path/to/STM32_Programmer_CLI FIRMWARE_ELF=/path/to/build/hover.elf ./flash-only.sh
 ```
 
 
@@ -89,9 +97,20 @@ In this architecture, neutral offset learning lives in the input-facing Command 
 
 ### Setpoint architecture rollout status
 
-- Step A is complete with active command filtering ownership: neutral offset learning now runs in `command_filter` close to raw input.
-- Step B is active: `DRIVE_FORWARD`/`DRIVE_REVERSE`/`ZERO_LATCH` intent-state behavior is enabled, with user-intent hysteresis (50 on / 35 off) and debug telemetry fields (`iMode`, `zLatchMs`, `zRel`) for deterministic bench validation.
-- Step C (jerk/asymmetric trajectory shaping) remains intentionally pending.
+- Step A is complete and successful: command filtering ownership is active, and neutral offset learning now runs in `command_filter` close to raw input.
+- Step B is complete and successful: `DRIVE_FORWARD`/`DRIVE_REVERSE`/`ZERO_LATCH` intent-state behavior is enabled, with user-intent hysteresis (50 on / 35 off) and debug telemetry fields (`iMode`, `zLatchMs`, `zRel`) for deterministic bench validation. `ZERO_LATCH` arm/activate/release decisions are based on measured speed (`speedAvg`) entering/leaving near-zero, not on setpoint reaching zero.
+- Step C is complete and successful: `velocity_setpoint_layer` now enforces asymmetric trajectory shaping (slow-up / fast-down) with per-loop slew limits and a measured-speed slip-gap clamp (`slip`).
+- Step D (outer velocity PID/PI controller that maps `v_sp` to torque request in main loop) is **not implemented yet** and remains pending by design.
+
+
+### Neutral offset calibration behavior (current implementation)
+
+- At boot, command filtering runs deterministic two-stage offset calibration for **both longitudinal and steering** axes:
+  - **0–1 s settle window**: no sampling, just wait for input interface startup jitter to settle.
+  - **1–2 s sample window**: average raw command samples per axis.
+- At the end of sampling, each axis latches its averaged neutral offset (clamped by `COMMAND_FILTER_OFFSET_MAX`).
+- **Safety latch**: while either axis is still in boot calibration, torque command is force-suppressed to zero (`calibI=1` in debug), so no drive torque is sent to the wheels during calibration.
+- After boot calibration is locked, bounded adaptive recentering is still available in near-neutral zone for slow drift compensation.
 
 ### Housekeeping rules
 

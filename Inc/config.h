@@ -9,6 +9,10 @@
 // from layered headers under /config.
 #include "../config/feature/feature_flags.h"
 #include "../config/control/control_defaults.h"
+#include "../config/control_tuning/intent_and_input_tuning.h"
+#include "../config/control_tuning/command_filter_tuning.h"
+#include "../config/control_tuning/velocity_setpoint_tuning.h"
+#include "../config/control_tuning/motor_controller_gains.h"
 #include "../config/board/board_default.h"
 #include "../config/user/user_params.h"
 
@@ -122,13 +126,6 @@
 // #define ELECTRIC_BRAKE_ENABLE           // [-] Flag to enable electric brake and replace the motor "freewheel" with a constant braking when the input torque request is 0. Only available and makes sense for TORQUE mode.
 // #define ELECTRIC_BRAKE_MAX    100       // (0, 500) Maximum electric brake to be applied when input torque request is 0 (pedal fully released).
 // #define ELECTRIC_BRAKE_THRES  120       // (0, 500) Threshold below at which the electric brake starts engaging.
-
-// Longitudinal speed-intent to torque-request mapping (TRQ mode)
-#define LONG_SPEED_KP_Q15        32768     // [-] fixdt(1,16,15) proportional gain from speed error to torque request
-#define LONG_RAMP_UP_NUM         6         // [-] numerator for up-ramp scaling vs RATE (6/5 => +20% faster than current)
-#define LONG_RAMP_UP_DEN         5         // [-] denominator for up-ramp scaling vs RATE
-#define LONG_RAMP_DOWN_NUM       2         // [-] numerator for down-ramp scaling vs up-ramp (2x faster down than up)
-#define LONG_RAMP_DOWN_DEN       1         // [-] denominator for down-ramp scaling vs up-ramp
 
 // Wheel command supervisor (post-mixer, pre-FOC)
 // The LPF coefficient below is tuned so a full step reaches ~90% in ~1000 ms at ~5 ms loop cadence.
