@@ -17,6 +17,8 @@
 typedef struct {
   int16_t velocity_setpoint;
   int16_t acceleration_setpoint;
+  uint8_t slip_gap_clamp_active;
+  uint16_t slip_gap_release_counter;
 } VelocitySetpointLayerState;
 
 typedef struct {
@@ -30,6 +32,7 @@ void VelocitySetpointLayer_Reset(VelocitySetpointLayerState *state);
 void VelocitySetpointLayer_Update(VelocitySetpointLayerState *state,
                                   int16_t velocity_intent,
                                   int16_t velocity_actual,
+                                  int16_t speed_max_rpm,
                                   VelocitySetpointLayerOutput *output);
 
 #endif // VELOCITY_SETPOINT_LAYER_H

@@ -551,6 +551,7 @@ int main(void) {
         VelocitySetpointLayer_Update(&velocitySetpointLayerState,
                                      intentStateMachineOutput.velocity_intent,
                                      speedAvg,
+                                     (int16_t)(rtP_Left.n_max >> 4),
                                      &velocitySetpointLayerOutput);
 
         intentVelocityOut = intentStateMachineOutput.velocity_intent;
@@ -581,6 +582,9 @@ int main(void) {
                                                        speedMaxRpm,
                                                        longitudinalRampUpRate,
                                                        longitudinalRampDownRate);
+          speed = DriveControl_ApplySlipSoftLimit(speed,
+                                                  setpointSlipGapClampActive,
+                                                  SOFT_LIMIT_TORQUE_WHEN_SLIP);
         } else {
           DriveControl_ResetLongitudinal(&driveControlLongitudinalState);
         }
