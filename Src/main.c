@@ -543,23 +543,45 @@ int main(void) {
       }
 
       /*
-       * Troubleshooting mode: disable intent/setpoint/motor PID/mixing layers.
-       * Feed direct longitudinal torque command equally to both wheels.
+       * Troubleshooting mode: simple velocity loop.
+       * - Keep command filter ownership (offset + smoothing)
+       * - Map longitudinal input [-1000..1000] to velocity setpoint [rpm]
+       * - Apply a P-only regulator to produce torque command
+       * - Keep steering/mixing disabled (both wheels get same torque)
        */
-      intentVelocityOut = speed;
-      intentCmdEffOut = speed;
-      intentArmedSignOut = (speed > 0) - (speed < 0);
+      {
+        int16_t speedMaxRpm = (int16_t)(rtP_Left.n_max >> 4);
+        int32_t velSetpointRpmFixdt;
+        int16_t velSetpointRpm;
+        int16_t speedErrorRpm;
+        int32_t torqueCmd;
+
+        if (speedMaxRpm <= 0) {
+          speedMaxRpm = SETPOINT_SPEED_MAX_RPM_FALLBACK;
+        }
+
+        velSetpointRpmFixdt = (int32_t)speed * (int32_t)speedMaxRpm;
+        velSetpointRpm = (int16_t)(velSetpointRpmFixdt / 1000);
+        speedErrorRpm = (int16_t)(velSetpointRpm - speedAvg);
+        torqueCmd = ((int32_t)speedErrorRpm * (int32_t)MOTOR_CTRL_VEL_KP_Q15) >> 15;
+        speed = CLAMP((int16_t)torqueCmd, -MOTOR_CTRL_TORQUE_MAX, MOTOR_CTRL_TORQUE_MAX);
+
+        setpointVelocityOut = velSetpointRpm;
+        setpointAccelerationOut = 0;
+        motorControllerSpeedErrorOut = speedErrorRpm;
+      }
+
+      intentVelocityOut = setpointVelocityOut;
+      intentCmdEffOut = setpointVelocityOut;
+      intentArmedSignOut = (setpointVelocityOut > 0) - (setpointVelocityOut < 0);
       intentBlockedSignOut = 0;
-      intentNearZeroOut = (uint8_t)(ABS(speed) <= 10);
+      intentNearZeroOut = (uint8_t)(ABS(setpointVelocityOut) <= 10);
       intentModeOut = (uint8_t)INTENT_STATE_MACHINE_DRIVE_FORWARD;
       intentZeroLatchElapsedMsOut = 0U;
       intentZeroLatchReleasedOut = 0U;
       intentZeroLatchArmedOut = 0U;
       intentZeroLatchActivatedOut = 0U;
-      setpointVelocityOut = speed;
-      setpointAccelerationOut = 0;
       setpointSlipGapClampActive = 0U;
-      motorControllerSpeedErrorOut = 0;
       motorControllerSaturatedOut = 0U;
 
       steer = 0;
