@@ -584,12 +584,23 @@ int main(void) {
                                trqModeEnabled,
                                &motorControllerOutput);
 
-        motorControllerSpeedErrorOut = motorControllerOutput.speed_error_rpm;
-        motorControllerSaturatedOut = motorControllerOutput.saturated;
-        speed = motorControllerOutput.torque_cmd;
-        speed = DriveControl_ApplySlipSoftLimit(speed,
-                                                setpointSlipGapClampActive,
-                                                SOFT_LIMIT_TORQUE_WHEN_SLIP);
+        if (trqModeEnabled != 0U) {
+          motorControllerSpeedErrorOut = motorControllerOutput.speed_error_rpm;
+          motorControllerSaturatedOut = motorControllerOutput.saturated;
+          speed = motorControllerOutput.torque_cmd;
+          speed = DriveControl_ApplySlipSoftLimit(speed,
+                                                  setpointSlipGapClampActive,
+                                                  SOFT_LIMIT_TORQUE_WHEN_SLIP);
+        } else {
+          /*
+           * Preserve legacy non-TRQ behavior:
+           * - in VLT/SPD modes the generated model interprets r_inpTgt per mode,
+           *   so keep passing the shaped command domain instead of forcing outer-loop torque.
+           */
+          motorControllerSpeedErrorOut = 0;
+          motorControllerSaturatedOut = 0U;
+          MotorController_Reset(&motorControllerState);
+        }
       }
 
       /* Torque-domain stage: intent-to-wheel torque mapping/mixing. */

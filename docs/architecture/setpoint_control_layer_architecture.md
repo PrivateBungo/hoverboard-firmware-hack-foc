@@ -273,7 +273,7 @@ Scope:
 Implementation status (current branch): **Completed / successful**
 
 - `core/control/motor_controller.*` now implements the main-loop outer velocity PI controller (`v_sp` -> torque command) with explicit torque saturation and anti-windup back-off behavior.
-- `Src/main.c` now uses `MotorController_Update(...)` after `velocity_setpoint_layer`, replacing the temporary gain-only speed-to-torque mapping/ramp path.
+- `Src/main.c` now uses `MotorController_Update(...)` after `velocity_setpoint_layer` in TRQ mode, replacing the temporary gain-only speed-to-torque mapping/ramp path while preserving non-TRQ command semantics.
 - Legacy `DriveControlLongitudinal` mapping helpers and their `LONG_*` tuning macros were removed to avoid parallel competing longitudinal pipelines.
 
 Test gate E:
