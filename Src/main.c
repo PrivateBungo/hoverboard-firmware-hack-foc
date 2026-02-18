@@ -280,6 +280,9 @@ int main(void) {
     int16_t setpointVelocityOut = 0;
     int16_t setpointAccelerationOut = 0;
     uint8_t setpointSlipGapClampActive = 0U;
+    int16_t outerTorqueCmdOut = 0;
+    int16_t outerSpeedITermOut = 0;
+    uint8_t outerSpeedSatOut = 0U;
     int16_t cmdL_adj = 0;
     int16_t cmdR_adj = 0;
   #endif
@@ -582,11 +585,18 @@ int main(void) {
                                                        speedMaxRpm,
                                                        longitudinalRampUpRate,
                                                        longitudinalRampDownRate);
+          outerTorqueCmdOut = speed;
+          outerSpeedITermOut = driveControlLongitudinalState.speedIntegratorCmd;
+          outerSpeedSatOut = (uint8_t)((outerTorqueCmdOut >= LONG_SPEED_OUTER_TORQUE_CMD_MAX) || (outerTorqueCmdOut <= LONG_SPEED_OUTER_TORQUE_CMD_MIN));
+
           speed = DriveControl_ApplySlipSoftLimit(speed,
                                                   setpointSlipGapClampActive,
                                                   SOFT_LIMIT_TORQUE_WHEN_SLIP);
         } else {
           DriveControl_ResetLongitudinal(&driveControlLongitudinalState);
+          outerTorqueCmdOut = 0;
+          outerSpeedITermOut = 0;
+          outerSpeedSatOut = 0U;
         }
       }
 
@@ -903,7 +913,7 @@ int main(void) {
       }
 
       if (main_loop_counter % DEBUG_SETPOINT_PRINT_INTERVAL_LOOPS == 0U) {
-        printf("SetpointTrace mode:%s rawLong:%d longOff:%d rawLongMinusOff:%d uCmd:%d cmdEff:%d arm:%d blk:%d nz:%u calibA:%u calibL:%u calibI:%u vIntent:%d vSet:%d aSet:%d vAct:%d slip:%u zLatchMs:%u zRel:%u\r\n",
+        printf("SetpointTrace mode:%s rawLong:%d longOff:%d rawLongMinusOff:%d uCmd:%d cmdEff:%d arm:%d blk:%d nz:%u calibA:%u calibL:%u calibI:%u vIntent:%d vSet:%d aSet:%d vAct:%d slip:%u vPI:%d iTerm:%d vSat:%u zLatchMs:%u zRel:%u\r\n",
           IntentModeToString((IntentStateMachineMode)intentModeOut),
           longitudinalRawCmd,
           commandFilterLongitudinalOffsetOut,
@@ -921,6 +931,9 @@ int main(void) {
           setpointAccelerationOut,
           speedAvg,
           (unsigned)setpointSlipGapClampActive,
+          outerTorqueCmdOut,
+          outerSpeedITermOut,
+          (unsigned)outerSpeedSatOut,
           (unsigned)intentZeroLatchElapsedMsOut,
           (unsigned)intentZeroLatchReleasedOut);
       }
@@ -930,7 +943,7 @@ int main(void) {
           process_debug();
         #else
           InputDecodePair inputDecodePair = InputDecode_BuildPair(input1[inIdx].raw, input2[inIdx].raw, cmdL, cmdR);
-          printf("in1:%i in2:%i rawLong:%i longOff:%i rawMinusOff:%i uCmd:%i cmdEff:%i arm:%d blk:%d nz:%u calibA:%u calibL:%u calibI:%u vIntent:%i iMode:%u zLatchMs:%u zRel:%u vSp:%i aSp:%i slip:%u cmdL:%i cmdR:%i ErrL:%u ErrR:%u BatADC:%i BatV:%i TempADC:%i Temp:%i StallL_t:%u StallR_t:%u StallSup:%u CtrlMode:%u\r\n",
+          printf("in1:%i in2:%i rawLong:%i longOff:%i rawMinusOff:%i uCmd:%i cmdEff:%i arm:%d blk:%d nz:%u calibA:%u calibL:%u calibI:%u vIntent:%i iMode:%u zLatchMs:%u zRel:%u vSp:%i aSp:%i slip:%u vPI:%i iTerm:%i vSat:%u cmdL:%i cmdR:%i ErrL:%u ErrR:%u BatADC:%i BatV:%i TempADC:%i Temp:%i StallL_t:%u StallR_t:%u StallSup:%u CtrlMode:%u\r\n",
             inputDecodePair.raw1,     // 1: INPUT1
             inputDecodePair.raw2,     // 2: INPUT2
             longitudinalRawCmd,
@@ -951,6 +964,9 @@ int main(void) {
             setpointVelocityOut,
             setpointAccelerationOut,
             (unsigned)setpointSlipGapClampActive,
+            outerTorqueCmdOut,
+            outerSpeedITermOut,
+            (unsigned)outerSpeedSatOut,
             inputDecodePair.cmd1,
             inputDecodePair.cmd2,
             g_errCodeLeftEffective,       // 5: left motor error code flags

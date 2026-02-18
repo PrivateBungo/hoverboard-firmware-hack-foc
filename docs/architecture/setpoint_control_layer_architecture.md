@@ -270,7 +270,11 @@ Scope:
 - Keep generated high-frequency electrical/current PI/PID internals untouched.
 - Place new controller gains/limits in `config/control_tuning/motor_controller_gains.h`.
 
-Implementation status (current branch): **Not implemented yet (planned)**
+Implementation status (current branch): **Completed / successful**
+
+- `Src/drive_control.c` now implements a main-loop outer velocity PI controller (`DriveControl_ComputeSpeedPITorque`) that maps `v_sp` tracking error to torque request in command units, with fixed-point Q15 gains from `config/control_tuning/motor_controller_gains.h`.
+- Anti-windup is implemented via conditional integrator hold when output is saturated further into the same direction; integrator and output saturation limits are explicit in tuning constants and remain independent from generated hard-limit ownership.
+- `Src/main.c` keeps the Phase D slip-aware soft-limit path (`DriveControl_ApplySlipSoftLimit`) after the new PI output and now reports PI observability fields (`vPI`, `iTerm`, `vSat`) in debug telemetry.
 
 Test gate E:
 

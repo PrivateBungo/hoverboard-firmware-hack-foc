@@ -16,6 +16,7 @@
 
 typedef struct {
   int16_t longitudinalTorqueCmd;
+  int16_t speedIntegratorCmd;
 } DriveControlLongitudinalState;
 
 typedef struct {

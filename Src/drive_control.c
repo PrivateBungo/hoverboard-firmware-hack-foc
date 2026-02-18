@@ -27,21 +27,58 @@ static int16_t DriveControl_ClampS16(int32_t value, int16_t lower, int16_t upper
   return (int16_t)value;
 }
 
-static int16_t DriveControl_ComputeSpeedPTorque(int16_t speedRefCmd,
-                                                int16_t speedMeasRpm,
-                                                int16_t speedMaxRpm) {
+static int16_t DriveControl_ComputeSpeedPITorque(DriveControlLongitudinalState *state,
+                                                 int16_t speedRefCmd,
+                                                 int16_t speedMeasRpm,
+                                                 int16_t speedMaxRpm) {
+  int32_t speedRange;
   int32_t vRefRpm;
   int32_t speedErrRpm;
+  int32_t normalizedErrQ15;
+  int32_t pTerm;
+  int32_t iDelta;
+  int32_t iTerm;
   int32_t torqueCmd;
-  int32_t speedRange;
+
+  if (state == 0) {
+    return 0;
+  }
 
   speedRange = (speedMaxRpm > 0) ? speedMaxRpm : 1;
   vRefRpm = ((int32_t)speedRefCmd * speedRange) / DRIVE_CONTROL_CMD_MAX;
   speedErrRpm = vRefRpm - speedMeasRpm;
 
-  torqueCmd = (((int64_t)speedErrRpm * DRIVE_CONTROL_CMD_MAX) * LONG_SPEED_KP_Q15) / ((int64_t)speedRange * 32768);
+  normalizedErrQ15 = (speedErrRpm * 32768) / speedRange;
 
-  return DriveControl_ClampS16(torqueCmd, DRIVE_CONTROL_CMD_MIN, DRIVE_CONTROL_CMD_MAX);
+  pTerm = (normalizedErrQ15 * LONG_SPEED_KP_Q15) / 32768;
+  iDelta = (normalizedErrQ15 * LONG_SPEED_KI_Q15) / 32768;
+
+  iTerm = (int32_t)state->speedIntegratorCmd + iDelta;
+  iTerm = DriveControl_ClampS16(iTerm,
+                                LONG_SPEED_I_TERM_MIN,
+                                LONG_SPEED_I_TERM_MAX);
+
+  torqueCmd = pTerm + iTerm;
+
+  if (torqueCmd > LONG_SPEED_OUTER_TORQUE_CMD_MAX) {
+    torqueCmd = LONG_SPEED_OUTER_TORQUE_CMD_MAX;
+    if (speedErrRpm > 0) {
+      iTerm = state->speedIntegratorCmd;
+    }
+  } else if (torqueCmd < LONG_SPEED_OUTER_TORQUE_CMD_MIN) {
+    torqueCmd = LONG_SPEED_OUTER_TORQUE_CMD_MIN;
+    if (speedErrRpm < 0) {
+      iTerm = state->speedIntegratorCmd;
+    }
+  }
+
+  state->speedIntegratorCmd = DriveControl_ClampS16(iTerm,
+                                                     LONG_SPEED_I_TERM_MIN,
+                                                     LONG_SPEED_I_TERM_MAX);
+
+  return DriveControl_ClampS16(torqueCmd,
+                               LONG_SPEED_OUTER_TORQUE_CMD_MIN,
+                               LONG_SPEED_OUTER_TORQUE_CMD_MAX);
 }
 
 static int16_t DriveControl_ApplyAsymmetricRamp(int16_t targetTorqueCmd,
@@ -92,6 +129,7 @@ void DriveControl_ResetLongitudinal(DriveControlLongitudinalState *state) {
     return;
   }
   state->longitudinalTorqueCmd = 0;
+  state->speedIntegratorCmd = 0;
 }
 
 int16_t DriveControl_BuildLongitudinalTorque(DriveControlLongitudinalState *state,
@@ -102,7 +140,10 @@ int16_t DriveControl_BuildLongitudinalTorque(DriveControlLongitudinalState *stat
                                              uint16_t rampDownRate) {
   int16_t torqueReq;
 
-  torqueReq = DriveControl_ComputeSpeedPTorque(speedRefCmd, speedMeasRpm, speedMaxRpm);
+  torqueReq = DriveControl_ComputeSpeedPITorque(state,
+                                                 speedRefCmd,
+                                                 speedMeasRpm,
+                                                 speedMaxRpm);
   return DriveControl_ApplyAsymmetricRamp(torqueReq, rampUpRate, rampDownRate, state);
 }
 

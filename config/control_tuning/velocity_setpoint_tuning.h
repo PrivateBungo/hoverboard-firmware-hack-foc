@@ -1,8 +1,7 @@
 #ifndef VELOCITY_SETPOINT_TUNING_H
 #define VELOCITY_SETPOINT_TUNING_H
 
-// Longitudinal speed-intent to torque-request mapping (TRQ mode)
-#define LONG_SPEED_KP_Q15        32768     // [-] fixdt(1,16,15) proportional gain from speed error to torque request
+// Longitudinal torque command slew shaping (TRQ mode)
 #define LONG_RAMP_UP_NUM         6         // [-] numerator for up-ramp scaling vs RATE (6/5 => +20% faster than current)
 #define LONG_RAMP_UP_DEN         5         // [-] denominator for up-ramp scaling vs RATE
 #define LONG_RAMP_DOWN_NUM       2         // [-] numerator for down-ramp scaling vs up-ramp (2x faster down than up)
