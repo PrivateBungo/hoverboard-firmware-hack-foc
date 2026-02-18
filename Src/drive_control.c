@@ -106,6 +106,21 @@ int16_t DriveControl_BuildLongitudinalTorque(DriveControlLongitudinalState *stat
   return DriveControl_ApplyAsymmetricRamp(torqueReq, rampUpRate, rampDownRate, state);
 }
 
+
+int16_t DriveControl_ApplySlipSoftLimit(int16_t torqueCmd, uint8_t slipGapClampActive, int16_t softLimit) {
+  int16_t torqueLimit = (softLimit >= 0) ? softLimit : (int16_t)-softLimit;
+
+  if (slipGapClampActive == 0U) {
+    return torqueCmd;
+  }
+
+  if (torqueLimit <= 0) {
+    return 0;
+  }
+
+  return DriveControl_ClampS16(torqueCmd, (int16_t)-torqueLimit, torqueLimit);
+}
+
 void DriveControl_MixCommands(int16_t speed, int16_t steer, int16_t *cmdL, int16_t *cmdR) {
 #if defined(TANK_STEERING) && !defined(VARIANT_HOVERCAR) && !defined(VARIANT_SKATEBOARD)
   *cmdL = steer;

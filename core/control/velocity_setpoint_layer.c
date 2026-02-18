@@ -61,6 +61,8 @@ void VelocitySetpointLayer_Reset(VelocitySetpointLayerState *state) {
 
   state->velocity_setpoint = 0;
   state->acceleration_setpoint = 0;
+  state->slip_gap_clamp_active = 0U;
+  state->slip_gap_release_counter = 0U;
 }
 
 void VelocitySetpointLayer_Update(VelocitySetpointLayerState *state,
@@ -71,6 +73,8 @@ void VelocitySetpointLayer_Update(VelocitySetpointLayerState *state,
   int16_t target_velocity;
   int16_t shaped_velocity;
   int16_t slip_gap;
+  int16_t slip_gap_abs;
+  int16_t slip_gap_release_max;
   uint8_t slip_gap_clamped;
 
   if ((state == 0) || (output == 0)) {
@@ -87,24 +91,47 @@ void VelocitySetpointLayer_Update(VelocitySetpointLayerState *state,
                                                       SETPOINT_RATE_UP,
                                                       SETPOINT_RATE_DOWN);
 
-  slip_gap_clamped = 0U;
+  slip_gap_clamped = state->slip_gap_clamp_active;
   slip_gap = (int16_t)(shaped_velocity - velocity_actual);
-  if (slip_gap > SETPOINT_SLIP_GAP_MAX) {
-    shaped_velocity = VelocitySetpointLayer_ClampS16((int32_t)velocity_actual + SETPOINT_SLIP_GAP_MAX,
-                                                      VELOCITY_SETPOINT_CMD_MIN,
-                                                      VELOCITY_SETPOINT_CMD_MAX);
-    slip_gap_clamped = 1U;
-  } else if (slip_gap < -SETPOINT_SLIP_GAP_MAX) {
-    shaped_velocity = VelocitySetpointLayer_ClampS16((int32_t)velocity_actual - SETPOINT_SLIP_GAP_MAX,
-                                                      VELOCITY_SETPOINT_CMD_MIN,
-                                                      VELOCITY_SETPOINT_CMD_MAX);
-    slip_gap_clamped = 1U;
+  slip_gap_abs = (slip_gap >= 0) ? slip_gap : (int16_t)-slip_gap;
+
+  if (slip_gap_clamped == 0U) {
+    if (slip_gap_abs > SETPOINT_SLIP_GAP_ON) {
+      slip_gap_clamped = 1U;
+      state->slip_gap_release_counter = 0U;
+    }
+  } else {
+    if (slip_gap_abs <= SETPOINT_SLIP_GAP_OFF) {
+      uint16_t releaseCounter = (uint16_t)(state->slip_gap_release_counter + 1U);
+      state->slip_gap_release_counter = (releaseCounter < SETPOINT_SLIP_RELEASE_LOOPS) ? releaseCounter : SETPOINT_SLIP_RELEASE_LOOPS;
+      if (state->slip_gap_release_counter >= SETPOINT_SLIP_RELEASE_LOOPS) {
+        slip_gap_clamped = 0U;
+        state->slip_gap_release_counter = 0U;
+      }
+    } else {
+      state->slip_gap_release_counter = 0U;
+    }
   }
+
+  if (slip_gap_clamped != 0U) {
+    slip_gap_release_max = (int16_t)((SETPOINT_SLIP_GAP_ON > SETPOINT_SLIP_GAP_OFF) ? SETPOINT_SLIP_GAP_ON : SETPOINT_SLIP_GAP_OFF);
+    if (slip_gap > slip_gap_release_max) {
+      shaped_velocity = VelocitySetpointLayer_ClampS16((int32_t)velocity_actual + slip_gap_release_max,
+                                                        VELOCITY_SETPOINT_CMD_MIN,
+                                                        VELOCITY_SETPOINT_CMD_MAX);
+    } else if (slip_gap < -slip_gap_release_max) {
+      shaped_velocity = VelocitySetpointLayer_ClampS16((int32_t)velocity_actual - slip_gap_release_max,
+                                                        VELOCITY_SETPOINT_CMD_MIN,
+                                                        VELOCITY_SETPOINT_CMD_MAX);
+    }
+  }
+
+  state->slip_gap_clamp_active = slip_gap_clamped;
 
   state->velocity_setpoint = shaped_velocity;
   state->acceleration_setpoint = (int16_t)(state->velocity_setpoint - previous_velocity);
 
   output->velocity_setpoint = state->velocity_setpoint;
   output->acceleration_setpoint = state->acceleration_setpoint;
-  output->slip_gap_clamp_active = slip_gap_clamped;
+  output->slip_gap_clamp_active = state->slip_gap_clamp_active;
 }

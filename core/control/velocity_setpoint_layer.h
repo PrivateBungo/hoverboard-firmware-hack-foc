@@ -17,6 +17,8 @@
 typedef struct {
   int16_t velocity_setpoint;
   int16_t acceleration_setpoint;
+  uint8_t slip_gap_clamp_active;
+  uint16_t slip_gap_release_counter;
 } VelocitySetpointLayerState;
 
 typedef struct {

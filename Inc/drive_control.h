@@ -33,6 +33,7 @@ int16_t DriveControl_BuildLongitudinalTorque(DriveControlLongitudinalState *stat
 void DriveControl_MixCommands(int16_t speed, int16_t steer, int16_t *cmdL, int16_t *cmdR);
 void DriveControl_MapCommandsToPwm(int16_t cmdL, int16_t cmdR, volatile int *pwml, volatile int *pwmr);
 void DriveControl_ResetStallDecay(DriveControlStallDecayState *state);
+int16_t DriveControl_ApplySlipSoftLimit(int16_t torqueCmd, uint8_t slipGapClampActive, int16_t softLimit);
 int16_t DriveControl_ApplyStallDecay(int16_t torqueCmd, int16_t wheelSpeedRpm, uint8_t isTorqueMode, DriveControlStallDecayState *state);
 
 #endif // DRIVE_CONTROL_H

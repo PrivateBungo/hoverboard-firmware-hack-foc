@@ -581,6 +581,9 @@ int main(void) {
                                                        speedMaxRpm,
                                                        longitudinalRampUpRate,
                                                        longitudinalRampDownRate);
+          speed = DriveControl_ApplySlipSoftLimit(speed,
+                                                  setpointSlipGapClampActive,
+                                                  SOFT_LIMIT_TORQUE_WHEN_SLIP);
         } else {
           DriveControl_ResetLongitudinal(&driveControlLongitudinalState);
         }

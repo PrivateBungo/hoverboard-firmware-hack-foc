@@ -233,7 +233,7 @@ Implementation status (current branch): **Completed / successful**
 
 - `core/control/velocity_setpoint_layer.*` is now active and no longer pass-through.
 - The setpoint layer enforces asymmetric per-loop trajectory rates (`SETPOINT_RATE_UP`, `SETPOINT_RATE_DOWN`) to realize slow-up / fast-down behavior.
-- A measured-speed slip-gap guard (`SETPOINT_SLIP_GAP_MAX`) clamps `|v_sp - v_actual|` and raises the existing `slip` telemetry flag when active.
+- A measured-speed slip-gap guard clamps `|v_sp - v_actual|` and raises the existing `slip` telemetry flag when active (thresholds now refined in Phase D).
 - `Src/main.c` feeds `speedAvg` into `VelocitySetpointLayer_Update(...)`, so shaping/guarding is anchored to measured speed.
 
 Test gate C:
@@ -250,7 +250,11 @@ Scope:
 - Integrate/retune soft-limit strategy in this same phase (still outside generated hard-limit logic).
 - Finalize parameter placement in `config/control_tuning` and `config/user`.
 
-Implementation status (current branch): **Pending**
+Implementation status (current branch): **Completed / successful**
+
+- `core/control/velocity_setpoint_layer.*` now uses slip-gap enter/release hysteresis (`SETPOINT_SLIP_GAP_ON`, `SETPOINT_SLIP_GAP_OFF`) with a release dwell (`SETPOINT_SLIP_RELEASE_LOOPS`) to avoid clamp chatter and reduce stuck-then-release surges.
+- `Src/main.c` applies a slip-aware torque soft-limit in TRQ mode via `DriveControl_ApplySlipSoftLimit(...)` and `SOFT_LIMIT_TORQUE_WHEN_SLIP`.
+- This integration remains outside generated hard-limit/current-loop internals and preserves hard-limit ownership in generated code.
 
 Test gate D:
 
