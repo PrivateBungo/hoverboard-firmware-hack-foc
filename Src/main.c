@@ -39,8 +39,8 @@
 #include "input_supervisor.h"
 #include "mode_supervisor.h"
 
-#define TROUBLESHOOT_ACCEL_UP_MMPS2      1000
-#define TROUBLESHOOT_ACCEL_DOWN_MMPS2    5000
+#define TROUBLESHOOT_ACCEL_UP_MMPS2      1500
+#define TROUBLESHOOT_ACCEL_DOWN_MMPS2    10000
 #define TROUBLESHOOT_RAMP_Q_SHIFT        10
 #define TROUBLESHOOT_RAMP_Q_SCALE        (1 << TROUBLESHOOT_RAMP_Q_SHIFT)
 
