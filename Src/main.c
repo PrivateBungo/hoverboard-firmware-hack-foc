@@ -40,7 +40,7 @@
 #include "mode_supervisor.h"
 
 #define TROUBLESHOOT_ACCEL_UP_MMPS2      1500
-#define TROUBLESHOOT_ACCEL_DOWN_MMPS2    10000
+#define TROUBLESHOOT_ACCEL_DOWN_MMPS2    15000
 #define TROUBLESHOOT_RAMP_Q_SHIFT        10
 #define TROUBLESHOOT_RAMP_Q_SCALE        (1 << TROUBLESHOOT_RAMP_Q_SHIFT)
 
@@ -498,6 +498,9 @@ int main(void) {
       // ####### COMMAND FILTER (longitudinal only troubleshooting path) #######
       {
         CommandFilterOutput commandFilterOutput;
+        int16_t userIntentSteeringCmd;
+        int16_t userIntentLongitudinalCmd;
+        IntentStateMachineOutput intentStateMachineOutput;
 
         CommandFilter_Process(&commandFilterState,
                               input1[inIdx].cmd,
@@ -513,13 +516,32 @@ int main(void) {
         longitudinalRawCmd = commandFilterOutput.longitudinal_raw;
         longitudinalCenteredCmd = commandFilterOutput.longitudinal_cmd;
 
-        /*
-         * Troubleshooting mode: bypass user-intent shaping and use only
-         * longitudinal command directly as torque request.
-         */
-        steer = 0;
-        speed = CLAMP(commandFilterOutput.longitudinal_cmd, -1000, 1000);
-        userIntentLongitudinalOut = speed;
+        UserIntent_BuildLongitudinalSteeringIntent(&userIntentState,
+                                                   commandFilterOutput.steering_cmd,
+                                                   commandFilterOutput.longitudinal_cmd,
+                                                   &userIntentSteeringCmd,
+                                                   &userIntentLongitudinalCmd);
+
+        userIntentLongitudinalOut = userIntentLongitudinalCmd;
+
+        IntentStateMachine_Update(&intentStateMachineState,
+                                  userIntentLongitudinalCmd,
+                                  speedAvg,
+                                  &intentStateMachineOutput);
+
+        steer = CLAMP(userIntentSteeringCmd, -1000, 1000);
+        speed = CLAMP(intentStateMachineOutput.velocity_intent, -1000, 1000);
+
+        intentVelocityOut = intentStateMachineOutput.velocity_intent;
+        intentCmdEffOut = intentStateMachineOutput.cmd_eff;
+        intentArmedSignOut = intentStateMachineOutput.armed_sign;
+        intentBlockedSignOut = intentStateMachineOutput.blocked_sign;
+        intentNearZeroOut = intentStateMachineOutput.near_zero;
+        intentModeOut = (uint8_t)intentStateMachineOutput.mode;
+        intentZeroLatchElapsedMsOut = intentStateMachineOutput.zero_latch_elapsed_ms;
+        intentZeroLatchReleasedOut = intentStateMachineOutput.zero_latch_released;
+        intentZeroLatchArmedOut = intentStateMachineOutput.zero_latch_armed;
+        intentZeroLatchActivatedOut = intentStateMachineOutput.zero_latch_activated;
       }
 
       // ####### VARIANT_HOVERCAR #######
@@ -725,16 +747,7 @@ int main(void) {
         motorControllerSaturatedOut = (uint8_t)(saturatedLeft || saturatedRight);
       }
 
-      intentVelocityOut = setpointVelocityOut;
-      intentCmdEffOut = setpointVelocityOut;
-      intentArmedSignOut = (setpointVelocityOut > 0) - (setpointVelocityOut < 0);
-      intentBlockedSignOut = 0;
-      intentNearZeroOut = (uint8_t)(ABS(setpointVelocityOut) <= 10);
-      intentModeOut = (uint8_t)INTENT_STATE_MACHINE_DRIVE_FORWARD;
-      intentZeroLatchElapsedMsOut = 0U;
-      intentZeroLatchReleasedOut = 0U;
-      intentZeroLatchArmedOut = 0U;
-      intentZeroLatchActivatedOut = 0U;
+      intentVelocityOut = speed;
       setpointSlipGapClampActive = 0U;
 
       steer = 0;

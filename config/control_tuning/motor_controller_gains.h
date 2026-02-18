@@ -13,7 +13,7 @@
  * - Gains below tune only this outer speed-domain PI controller.
  */
 
-#define MOTOR_CTRL_VEL_KP_Q15    26214  // [-] Q15 gain (~0.80) from speed error [rpm] to torque command units
+#define MOTOR_CTRL_VEL_KP_Q15    39321  // [-] Q15 gain (~1.20) from speed error [rpm] to torque command units
 #define MOTOR_CTRL_VEL_KI_Q15     1638  // [-] Q15 integral gain (~0.05) per main-loop update
 #define MOTOR_CTRL_INT_LIM       800    // [-] integrator clamp in torque-command units
 #define MOTOR_CTRL_TORQUE_MAX   1000    // [-] outer-loop torque command saturation before soft limits
