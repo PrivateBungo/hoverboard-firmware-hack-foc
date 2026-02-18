@@ -270,7 +270,11 @@ Scope:
 - Keep generated high-frequency electrical/current PI/PID internals untouched.
 - Place new controller gains/limits in `config/control_tuning/motor_controller_gains.h`.
 
-Implementation status (current branch): **Not implemented yet (planned)**
+Implementation status (current branch): **Completed / successful**
+
+- `core/control/motor_controller.*` now implements the main-loop outer velocity PI controller (`v_sp` -> torque command) with explicit torque saturation and anti-windup back-off behavior.
+- `Src/main.c` now uses `MotorController_Update(...)` after `velocity_setpoint_layer`, replacing the temporary gain-only speed-to-torque mapping/ramp path.
+- Legacy `DriveControlLongitudinal` mapping helpers and their `LONG_*` tuning macros were removed to avoid parallel competing longitudinal pipelines.
 
 Test gate E:
 

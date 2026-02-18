@@ -2,15 +2,20 @@
 #define MOTOR_CONTROLLER_GAINS_H
 
 /*
- * IMPORTANT CLARIFICATION:
- * - Generated BLDC controller PI/PID internals (high-frequency electrical/current-domain loops)
- *   remain owned by generated parameter sets in `Src/BLDC_controller_data.c`.
- * - This file is reserved for the planned outer velocity controller tuning gains
- *   (main-loop speed-domain PID/PI that tracks vehicle velocity setpoint).
+ * Outer velocity controller (Step E)
+ * ----------------------------------
+ * This controller runs in the main loop and maps velocity setpoint tracking
+ * error (rpm-domain) into a normalized wheel torque command [-1000..1000].
  *
- * In other words: this file is NOT for replacing low-level FOC/current loops.
- * It is the dedicated home for the future speed-tracking controller introduced
- * in later rollout phases.
+ * NOTE:
+ * - Generated BLDC PI/PID internals (high-frequency electrical/current-domain loops)
+ *   remain owned by `Src/BLDC_controller_data.c`.
+ * - Gains below tune only this outer speed-domain PI controller.
  */
+
+#define MOTOR_CTRL_VEL_KP_Q15    26214  // [-] Q15 gain (~0.80) from speed error [rpm] to torque command units
+#define MOTOR_CTRL_VEL_KI_Q15     1638  // [-] Q15 integral gain (~0.05) per main-loop update
+#define MOTOR_CTRL_INT_LIM       800    // [-] integrator clamp in torque-command units
+#define MOTOR_CTRL_TORQUE_MAX   1000    // [-] outer-loop torque command saturation before soft limits
 
 #endif // MOTOR_CONTROLLER_GAINS_H
