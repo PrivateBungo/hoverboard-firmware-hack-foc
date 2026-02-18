@@ -551,6 +551,7 @@ int main(void) {
         VelocitySetpointLayer_Update(&velocitySetpointLayerState,
                                      intentStateMachineOutput.velocity_intent,
                                      speedAvg,
+                                     (int16_t)(rtP_Left.n_max >> 4),
                                      &velocitySetpointLayerOutput);
 
         intentVelocityOut = intentStateMachineOutput.velocity_intent;

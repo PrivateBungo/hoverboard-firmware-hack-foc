@@ -232,9 +232,9 @@ Scope:
 Implementation status (current branch): **Completed / successful**
 
 - `core/control/velocity_setpoint_layer.*` is now active and no longer pass-through.
-- The setpoint layer enforces asymmetric per-loop trajectory rates (`SETPOINT_RATE_UP`, `SETPOINT_RATE_DOWN`) to realize slow-up / fast-down behavior.
+- The setpoint layer enforces asymmetric trajectory evolution with physical accel/jerk tuning (`SETPOINT_ACCEL_*`, `SETPOINT_JERK_*`) to realize slow-up / fast-down behavior.
 - A measured-speed slip-gap guard clamps `|v_sp - v_actual|` and raises the existing `slip` telemetry flag when active (thresholds now refined in Phase D).
-- `Src/main.c` feeds `speedAvg` into `VelocitySetpointLayer_Update(...)`, so shaping/guarding is anchored to measured speed.
+- `Src/main.c` feeds `speedAvg` and runtime speed-range (`rtP_Left.n_max >> 4`) into `VelocitySetpointLayer_Update(...)`, so shaping/guarding is anchored to measured speed and normalized to platform speed scale.
 
 Test gate C:
 
