@@ -12,7 +12,7 @@ Table of Contents
 =======================
 
 * **Wiki:** please check the wiki pages for [Getting Started](https://github.com/EFeru/hoverboard-firmware-hack-FOC/wiki#getting-started) and for [Troubleshooting](https://github.com/EFeru/hoverboard-firmware-hack-FOC/wiki#troubleshooting)
-* [Quick build + flash script](#quick-build--flash-script)
+* [Build / flash helper scripts](#build--flash-helper-scripts)
 * [Control Architecture Layers (User Intent vs Torque Domain)](#control-architecture-layers-user-intent-vs-torque-domain)
 * [Hardware](#hardware)
 * [FOC Firmware](#foc-firmware)
@@ -41,15 +41,24 @@ Table of Contents
 
 
 ---
-## Quick build + flash script
+## Build / flash helper scripts
 
-Run this to pull latest changes, clean, build, and flash in one go:
+You now have three top-level executables:
 
-```bash
-./fw-update.sh
-```
+- Build only (pull + clean + build):
+  ```bash
+  ./fw-build.sh
+  ```
+- Flash only (flash existing ELF):
+  ```bash
+  ./fw-flash.sh
+  ```
+- Build + flash (pull + clean + build + flash):
+  ```bash
+  ./fw-update.sh
+  ```
 
-The script uses these defaults (overridable via env vars):
+Flash scripts use these defaults (overridable via env vars):
 
 - `PROGRAMMER_CLI=/home/gijs/STMicroelectronics/STM32Cube/STM32CubeProgrammer/bin/STM32_Programmer_CLI`
 - `FIRMWARE_ELF=/home/gijs/Documents/hoverboard-firmware-hack-foc/build/hover.elf`
@@ -57,6 +66,7 @@ The script uses these defaults (overridable via env vars):
 Example with custom paths:
 
 ```bash
+PROGRAMMER_CLI=/path/to/STM32_Programmer_CLI FIRMWARE_ELF=/path/to/build/hover.elf ./fw-flash.sh
 PROGRAMMER_CLI=/path/to/STM32_Programmer_CLI FIRMWARE_ELF=/path/to/build/hover.elf ./fw-update.sh
 ```
 
