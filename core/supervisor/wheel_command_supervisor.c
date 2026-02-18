@@ -6,6 +6,11 @@ static int16_t WheelCommandSupervisor_LpfStep(int16_t input, int32_t *stateFixdt
   int32_t inputFixdt;
   int32_t delta;
 
+  if (WHEEL_CMD_FILTER_COEF >= 65535) {
+    *stateFixdt = ((int32_t)input) << 16;
+    return input;
+  }
+
   inputFixdt = ((int32_t)input) << 16;
   delta = inputFixdt - *stateFixdt;
   *stateFixdt += (int32_t)(((int64_t)delta * WHEEL_CMD_FILTER_COEF) >> 16);
