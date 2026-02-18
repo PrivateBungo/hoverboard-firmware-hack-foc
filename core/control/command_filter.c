@@ -32,6 +32,8 @@ static void CommandFilter_ResetAxis(CommandFilterAxisState *axis) {
   axis->stable_count = 0U;
   axis->boot_elapsed_ms = 0U;
   axis->boot_samples = 0U;
+  axis->cmd_lpf_fixdt = 0;
+  axis->cmd_lpf_initialized = 0U;
   axis->learning_zone = 0U;
   axis->locked = 0U;
   axis->boot_calibrated = 0U;
@@ -82,6 +84,21 @@ static uint8_t CommandFilter_UpdateBootCalibration(CommandFilterAxisState *axis,
   *calibInProgressOut = 0U;
 
   return 1U;
+}
+
+
+static int16_t CommandFilter_LpfStepAxis(CommandFilterAxisState *axis, int16_t input) {
+  int32_t inputFixdt = ((int32_t)input) << 16;
+
+  if (axis->cmd_lpf_initialized == 0U) {
+    axis->cmd_lpf_fixdt = inputFixdt;
+    axis->cmd_lpf_initialized = 1U;
+  } else {
+    int64_t delta = (int64_t)inputFixdt - (int64_t)axis->cmd_lpf_fixdt;
+    axis->cmd_lpf_fixdt += (int32_t)((delta * (int64_t)COMMAND_FILTER_LONGITUDINAL_LPF_ALPHA_Q15) >> 15);
+  }
+
+  return (int16_t)(axis->cmd_lpf_fixdt >> 16);
 }
 
 static uint8_t CommandFilter_UpdateAdaptiveOffset(CommandFilterAxisState *axis, int16_t raw) {
@@ -177,7 +194,8 @@ void CommandFilter_Process(CommandFilterState *state,
   output->steering_offset = state->steering.offset;
   output->longitudinal_offset = state->longitudinal.offset;
   output->steering_cmd = (int16_t)(steering_cmd - state->steering.offset);
-  output->longitudinal_cmd = (int16_t)(longitudinal_cmd - state->longitudinal.offset);
+  output->longitudinal_cmd = CommandFilter_LpfStepAxis(&state->longitudinal,
+                                                        (int16_t)(longitudinal_cmd - state->longitudinal.offset));
 
   output->longitudinal_calib_active = (uint8_t)(longBootCalibActive || (state->longitudinal.learning_zone != 0U));
   output->longitudinal_calib_locked = state->longitudinal.locked;
