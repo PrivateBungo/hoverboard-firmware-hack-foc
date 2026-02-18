@@ -85,7 +85,13 @@ Raw Joystick Input
 - **FOC Domain (16 kHz ISR)**: high-rate motor control internals that execute torque/voltage/speed control and PWM generation.
 
 This separation is intentional: user interaction policy should evolve without forcing changes in torque internals or FOC timing-critical code.
-In this architecture, deadband, hysteresis, and low-pass filtering remain in the motor-control command-shaping domain near wheel command generation.
+In this architecture, neutral offset learning lives in the input-facing Command Filtering layer, while command deadband/sign hysteresis live in the User Intent layer; wheel-domain shaping is kept for wheel command smoothing only. Directional ZERO_LATCH is implemented as armed-on-reversal and active-at-standstill to block only opposite-direction engagement for a short guard window.
+
+### Setpoint architecture rollout status
+
+- Step A is complete with active command filtering ownership: neutral offset learning now runs in `command_filter` close to raw input.
+- Step B is active: `DRIVE_FORWARD`/`DRIVE_REVERSE`/`ZERO_LATCH` intent-state behavior is enabled, with user-intent hysteresis (50 on / 35 off) and debug telemetry fields (`iMode`, `zLatchMs`, `zRel`) for deterministic bench validation.
+- Step C (jerk/asymmetric trajectory shaping) remains intentionally pending.
 
 ### Housekeeping rules
 

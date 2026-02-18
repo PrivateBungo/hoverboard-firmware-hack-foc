@@ -40,6 +40,11 @@ Implementation implication:
 - Decode PWM/UART command channels.
 - Validate plausibility/timeouts.
 - Apply minimal smoothing for glitch rejection only.
+- Learn/track neutral offset close to raw input (before intent/sign policy):
+  - learn only in near-center zone (enter <=35, exit >=50),
+  - require stable samples over time,
+  - block learning while operator is commanding,
+  - clamp learned offsets to bounded limits.
 - Normalize to a common command domain:
 
 `u_cmd ∈ [-1000, 1000]`
@@ -65,11 +70,13 @@ Convert normalized command into sharp desired velocity intent `v_intent`.
 ### Behavioral constraints
 
 - Intent transitions remain sharp by design.
+- User-command deadband/sign hysteresis is handled in this layer (policy): enter-active at |cmd| >= 50, return-to-zero at |cmd| <= 35.
 - Hard reverse while moving forward must not produce a synthetic brake flag.
 - Braking emerges from large `Δv` in downstream setpoint/motor-control layers.
-- `ZERO_LATCH` inhibits reverse at near-zero crossing until:
-  - speed remains in deadband for 0.5 s, or
-  - command sign reverts.
+- `ZERO_LATCH` uses directional armed→active behavior:
+  - reversal while moving arms latch (braking remains natural),
+  - latch activates only at near-zero crossing and blocks only the opposite direction,
+  - latch releases after hold time at standstill or immediately if command goes neutral/other direction.
 
 ## 5. Velocity Setpoint Control Layer (1 kHz)
 
@@ -182,7 +189,7 @@ Scope:
 
 Implementation status (current branch):
 
-- `core/control/command_filter.*`, `core/control/intent_state_machine.*`, and `core/control/velocity_setpoint_layer.*` were added as pass-through scaffolding modules.
+- `core/control/command_filter.*`, `core/control/intent_state_machine.*`, and `core/control/velocity_setpoint_layer.*` were added as scaffolding modules; command filter now actively owns neutral offset learning.
 - `Src/main.c` now wires these modules in the command path while preserving existing behavior (pass-through velocity setpoint).
 - Debug telemetry now prints `rawLong`, `filtLong`, `vIntent`, `vSp`, `aSp`, and `slip` alongside existing command/error fields for side-by-side parity checks.
 
@@ -199,6 +206,14 @@ Scope:
 - Activate `DRIVE_FORWARD/DRIVE_REVERSE/ZERO_LATCH` intent logic.
 - Keep legacy smoothing path for physical command shaping.
 - Log intent transitions and zero-latch timer decisions.
+
+Implementation status (current branch):
+
+- `core/control/intent_state_machine.*` now implements forward/reverse intent modes and a deterministic zero-latch handoff near standstill.
+- Hard reverse while moving now flips intent sign immediately; near-zero sign flips pass through `ZERO_LATCH` hold/release rules.
+- `Src/main.c` now feeds actual speed into the intent layer and exposes `iMode`, `zLatchMs`, and `zRel` in debug telemetry.
+- Command offset learning ownership has been moved to `core/control/command_filter.*`; boot-time neutral compensation in runtime wheel command supervision was removed to avoid double compensation.
+- Debug serial now emits intent mode transition logs, periodic zero-latch timer logs, and release events for bench traceability.
 
 Test gate B:
 
@@ -255,6 +270,7 @@ Test gate D:
 ### 11.3 Required telemetry
 
 - `u_cmd`, validity, filter outputs.
+- `cmd_eff`, `armed_sign`, `blocked_sign`, `near_zero`, `zLatchMs`.
 - Intent state and `v_intent`.
 - `v_sp`, `a_sp`, trajectory phase flags.
 - `v_actual`, slip-gap metric, clamp active flag.
