@@ -727,7 +727,8 @@ int main(void) {
           int32_t vSpAbs = (vSpMmps >= 0) ? vSpMmps : -vSpMmps;
           int32_t vActAbs = (vActMmps >= 0) ? vActMmps : -vActMmps;
 
-          printf("Dbg vSp:%s%ld.%03ldm/s vAct:%s%ld.%03ldm/s trq:%d\r\n",
+          printf("Dbg uCmd:%d vSp:%s%ld.%03ldm/s vAct:%s%ld.%03ldm/s trq:%d\r\n",
+            intentCmdEffOut,
             (vSpMmps < 0) ? "-" : "",
             (long)(vSpAbs / 1000),
             (long)(vSpAbs % 1000),
