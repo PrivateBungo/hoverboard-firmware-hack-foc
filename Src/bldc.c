@@ -27,23 +27,13 @@
 #include "setup.h"
 #include "config.h"
 #include "util.h"
+#include "foc_adapter.h"
 
 // Matlab includes and defines - from auto-code generation
 // ###############################################################################
 #include "BLDC_controller.h"           /* Model's header file */
 #include "rtwtypes.h"
 
-extern RT_MODEL *const rtM_Left;
-extern RT_MODEL *const rtM_Right;
-
-extern DW   rtDW_Left;                  /* Observable states */
-extern ExtU rtU_Left;                   /* External inputs */
-extern ExtY rtY_Left;                   /* External outputs */
-extern P    rtP_Left;
-
-extern DW   rtDW_Right;                 /* Observable states */
-extern ExtU rtU_Right;                  /* External inputs */
-extern ExtY rtY_Right;                  /* External outputs */
 // ###############################################################################
 
 static int16_t pwm_margin;              /* This margin allows to have a window in the PWM signal for proper FOC Phase currents measurement */
@@ -87,9 +77,6 @@ static int32_t batVoltageFixdt  = (400 * BAT_CELLS * BAT_CALIB_ADC) / BAT_CALIB_
 // =================================
 // DMA interrupt frequency =~ 16 kHz
 // =================================
-#define STALL_ERR_BIT              (0x04U)
-#define STALL_RECOVERY_DELAY_MS    (10000U)
-#define STALL_NEUTRAL_PWM_DEADBAND (300)
 
 void DMA1_Channel1_IRQHandler(void) {
 
@@ -157,7 +144,7 @@ void DMA1_Channel1_IRQHandler(void) {
 #endif
 
   // Adjust pwm_margin depending on the selected Control Type
-  if (rtP_Left.z_ctrlTypSel == FOC_CTRL) {
+  if (FocAdapter_GetParams(FOC_ADAPTER_MOTOR_LEFT)->z_ctrlTypSel == FOC_CTRL) {
     pwm_margin = 110;
   } else {
     pwm_margin = 0;
@@ -168,8 +155,6 @@ void DMA1_Channel1_IRQHandler(void) {
   int ul, vl, wl;
   int ur, vr, wr;
   static boolean_T OverrunFlag = false;
-  static uint32_t stallRecoverAtMs = 0;
-  static uint8_t stallRecoveryActive = 0;
 
   /* Check for overrun */
   if (OverrunFlag) {
@@ -177,24 +162,12 @@ void DMA1_Channel1_IRQHandler(void) {
   }
   OverrunFlag = true;
 
-  const uint32_t tickNowMs = HAL_GetTick();
-  const uint8_t leftErrRaw = rtY_Left.z_errCode;
-  const uint8_t rightErrRaw = rtY_Right.z_errCode;
-  const uint8_t stallErrActive = ((leftErrRaw & STALL_ERR_BIT) != 0U) || ((rightErrRaw & STALL_ERR_BIT) != 0U);
+  /* Snapshot raw motor faults for supervisory policy in main loop. */
+  g_errCodeLeftEffective = FocAdapter_GetErrorCode(FOC_ADAPTER_MOTOR_LEFT);
+  g_errCodeRightEffective = FocAdapter_GetErrorCode(FOC_ADAPTER_MOTOR_RIGHT);
 
-  if (!stallRecoveryActive && stallErrActive) {
-    stallRecoveryActive = 1U;
-    stallRecoverAtMs = tickNowMs + STALL_RECOVERY_DELAY_MS;
-  }
-
-  const uint8_t stallGraceActive = stallRecoveryActive && (stallRecoverAtMs > tickNowMs);
-
-  /* During stall recovery we reject control input and keep motors disabled. */
-  if (stallRecoveryActive) {
-    enableFin = 0;
-  } else {
-    enableFin = enable && !leftErrRaw && !rightErrRaw;
-  }
+  /* ISR gating remains immediate and deterministic: enable command + non-stall hard faults. */
+  enableFin = enable && ((g_errCodeLeftEffective & (uint8_t)~0x04U) == 0U) && ((g_errCodeRightEffective & (uint8_t)~0x04U) == 0U);
  
   // ========================= LEFT MOTOR ============================ 
     // Get hall sensors values
@@ -202,52 +175,30 @@ void DMA1_Channel1_IRQHandler(void) {
     uint8_t hall_vl = !(LEFT_HALL_V_PORT->IDR & LEFT_HALL_V_PIN);
     uint8_t hall_wl = !(LEFT_HALL_W_PORT->IDR & LEFT_HALL_W_PIN);
 
-    /* Set motor inputs here */
-    rtU_Left.b_motEna     = enableFin;
-    rtU_Left.z_ctrlModReq = ctrlModReq;  
-    rtU_Left.r_inpTgt     = pwml;
-    rtU_Left.b_hallA      = hall_ul;
-    rtU_Left.b_hallB      = hall_vl;
-    rtU_Left.b_hallC      = hall_wl;
-    rtU_Left.i_phaAB      = curL_phaA;
-    rtU_Left.i_phaBC      = curL_phaB;
-    rtU_Left.i_DCLink     = curL_DC;
-    // rtU_Left.a_mechAngle   = ...; // Angle input in DEGREES [0,360] in fixdt(1,16,4) data type. If `angle` is float use `= (int16_t)floor(angle * 16.0F)` If `angle` is integer use `= (int16_t)(angle << 4)`
-    
+    const FocAdapterInputFrame leftInputFrame = {
+      .motorEnable = enableFin,
+      .controlModeRequest = ctrlModReq,
+      .inputTarget = pwml,
+      .hallA = hall_ul,
+      .hallB = hall_vl,
+      .hallC = hall_wl,
+      .phaseCurrentAB = curL_phaA,
+      .phaseCurrentBC = curL_phaB,
+      .dcLinkCurrent = curL_DC,
+    };
+
+    FocAdapter_SetInputFrame(FOC_ADAPTER_MOTOR_LEFT, &leftInputFrame);
+
     /* Step the controller */
-    #ifdef MOTOR_LEFT_ENA    
-    BLDC_controller_step(rtM_Left);
+    #ifdef MOTOR_LEFT_ENA
+    FocAdapter_Step(FOC_ADAPTER_MOTOR_LEFT);
     #endif
 
     /* Get motor outputs here */
-    ul            = rtY_Left.DC_phaA;
-    vl            = rtY_Left.DC_phaB;
-    wl            = rtY_Left.DC_phaC;
-  // errCodeLeft  = rtY_Left.z_errCode;
-  // motSpeedLeft = rtY_Left.n_mot;
-  // motAngleLeft = rtY_Left.a_elecAngle;
-
-    const uint8_t inputIsNeutral = (ABS(pwml) <= STALL_NEUTRAL_PWM_DEADBAND) && (ABS(pwmr) <= STALL_NEUTRAL_PWM_DEADBAND);
-    const uint8_t stallRecoveryReady = stallRecoveryActive && !stallGraceActive && inputIsNeutral;
-
-    if (stallRecoveryReady) {
-      rtDW_Left.UnitDelay_DSTATE_e &= (uint8_T)~STALL_ERR_BIT;
-      rtDW_Right.UnitDelay_DSTATE_e &= (uint8_T)~STALL_ERR_BIT;
-    }
-
-    g_errCodeLeftEffective = rtY_Left.z_errCode;
-    g_errCodeRightEffective = rtY_Right.z_errCode;
-
-    if (stallRecoveryReady) {
-      g_errCodeLeftEffective &= (uint8_t)~STALL_ERR_BIT;
-      g_errCodeRightEffective &= (uint8_t)~STALL_ERR_BIT;
-    }
-
-    /* Exit recovery only after raw stall bit is gone, preventing immediate retrigger loops. */
-    if (stallRecoveryActive && !stallGraceActive && !stallErrActive) {
-      stallRecoveryActive = 0U;
-      stallRecoverAtMs = 0U;
-    }
+    const ExtY *leftOutput = FocAdapter_GetOutput(FOC_ADAPTER_MOTOR_LEFT);
+    ul            = leftOutput->DC_phaA;
+    vl            = leftOutput->DC_phaB;
+    wl            = leftOutput->DC_phaC;
 
     /* Apply commands */
     LEFT_TIM->LEFT_TIM_U    = (uint16_t)CLAMP(ul + pwm_res / 2, pwm_margin, pwm_res-pwm_margin);
@@ -262,30 +213,30 @@ void DMA1_Channel1_IRQHandler(void) {
     uint8_t hall_vr = !(RIGHT_HALL_V_PORT->IDR & RIGHT_HALL_V_PIN);
     uint8_t hall_wr = !(RIGHT_HALL_W_PORT->IDR & RIGHT_HALL_W_PIN);
 
-    /* Set motor inputs here */
-    rtU_Right.b_motEna      = enableFin;
-    rtU_Right.z_ctrlModReq  = ctrlModReq;
-    rtU_Right.r_inpTgt      = pwmr;
-    rtU_Right.b_hallA       = hall_ur;
-    rtU_Right.b_hallB       = hall_vr;
-    rtU_Right.b_hallC       = hall_wr;
-    rtU_Right.i_phaAB       = curR_phaB;
-    rtU_Right.i_phaBC       = curR_phaC;
-    rtU_Right.i_DCLink      = curR_DC;
-    // rtU_Right.a_mechAngle   = ...; // Angle input in DEGREES [0,360] in fixdt(1,16,4) data type. If `angle` is float use `= (int16_t)floor(angle * 16.0F)` If `angle` is integer use `= (int16_t)(angle << 4)`
-    
+    const FocAdapterInputFrame rightInputFrame = {
+      .motorEnable = enableFin,
+      .controlModeRequest = ctrlModReq,
+      .inputTarget = pwmr,
+      .hallA = hall_ur,
+      .hallB = hall_vr,
+      .hallC = hall_wr,
+      .phaseCurrentAB = curR_phaB,
+      .phaseCurrentBC = curR_phaC,
+      .dcLinkCurrent = curR_DC,
+    };
+
+    FocAdapter_SetInputFrame(FOC_ADAPTER_MOTOR_RIGHT, &rightInputFrame);
+
     /* Step the controller */
     #ifdef MOTOR_RIGHT_ENA
-    BLDC_controller_step(rtM_Right);
+    FocAdapter_Step(FOC_ADAPTER_MOTOR_RIGHT);
     #endif
 
     /* Get motor outputs here */
-    ur            = rtY_Right.DC_phaA;
-    vr            = rtY_Right.DC_phaB;
-    wr            = rtY_Right.DC_phaC;
- // errCodeRight  = rtY_Right.z_errCode;
- // motSpeedRight = rtY_Right.n_mot;
- // motAngleRight = rtY_Right.a_elecAngle;
+    const ExtY *rightOutput = FocAdapter_GetOutput(FOC_ADAPTER_MOTOR_RIGHT);
+    ur            = rightOutput->DC_phaA;
+    vr            = rightOutput->DC_phaB;
+    wr            = rightOutput->DC_phaC;
 
     /* Apply commands */
     RIGHT_TIM->RIGHT_TIM_U  = (uint16_t)CLAMP(ur + pwm_res / 2, pwm_margin, pwm_res-pwm_margin);

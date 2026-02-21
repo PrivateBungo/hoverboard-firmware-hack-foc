@@ -15,22 +15,13 @@
 #include <stdint.h>
 
 typedef struct {
-  int16_t steerRateFixdt;
-  int16_t speedRateFixdt;
-  int32_t steerFixdt;
-  int32_t speedFixdt;
-} DriveControlState;
-
-typedef struct {
   uint16_t stallTimerMs;
 } DriveControlStallDecayState;
 
-void DriveControl_Init(DriveControlState *state);
-void DriveControl_ResetFilters(DriveControlState *state);
-void DriveControl_FilterInputs(DriveControlState *state, int16_t steerCmd, int16_t speedCmd, uint16_t rate, int16_t *steer, int16_t *speed);
 void DriveControl_MixCommands(int16_t speed, int16_t steer, int16_t *cmdL, int16_t *cmdR);
 void DriveControl_MapCommandsToPwm(int16_t cmdL, int16_t cmdR, volatile int *pwml, volatile int *pwmr);
 void DriveControl_ResetStallDecay(DriveControlStallDecayState *state);
+int16_t DriveControl_ApplySlipSoftLimit(int16_t torqueCmd, uint8_t slipGapClampActive, int16_t softLimit);
 int16_t DriveControl_ApplyStallDecay(int16_t torqueCmd, int16_t wheelSpeedRpm, uint8_t isTorqueMode, DriveControlStallDecayState *state);
 
 #endif // DRIVE_CONTROL_H

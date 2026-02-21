@@ -13,6 +13,7 @@ Table of Contents
 
 * **Wiki:** please check the wiki pages for [Getting Started](https://github.com/EFeru/hoverboard-firmware-hack-FOC/wiki#getting-started) and for [Troubleshooting](https://github.com/EFeru/hoverboard-firmware-hack-FOC/wiki#troubleshooting)
 * [Quick build + flash script](#quick-build--flash-script)
+* [Control Architecture Layers (User Intent vs Torque Domain)](#control-architecture-layers-user-intent-vs-torque-domain)
 * [Hardware](#hardware)
 * [FOC Firmware](#foc-firmware)
 * [Example Variants](#example-variants)
@@ -42,13 +43,21 @@ Table of Contents
 ---
 ## Quick build + flash script
 
-Run this to pull latest changes, clean, build, and flash in one go:
+Use these root scripts for explicit workflows:
+
+```bash
+./build-only.sh
+./flash-only.sh
+./combined-build-and-flash.sh
+```
+
+Compatibility alias (still supported):
 
 ```bash
 ./fw-update.sh
 ```
 
-The script uses these defaults (overridable via env vars):
+Flash scripts use these defaults (overridable via env vars):
 
 - `PROGRAMMER_CLI=/home/gijs/STMicroelectronics/STM32Cube/STM32CubeProgrammer/bin/STM32_Programmer_CLI`
 - `FIRMWARE_ELF=/home/gijs/Documents/hoverboard-firmware-hack-foc/build/hover.elf`
@@ -56,8 +65,60 @@ The script uses these defaults (overridable via env vars):
 Example with custom paths:
 
 ```bash
-PROGRAMMER_CLI=/path/to/STM32_Programmer_CLI FIRMWARE_ELF=/path/to/build/hover.elf ./fw-update.sh
+PROGRAMMER_CLI=/path/to/STM32_Programmer_CLI FIRMWARE_ELF=/path/to/build/hover.elf ./flash-only.sh
 ```
+
+
+---
+## Control Architecture Layers (User Intent vs Torque Domain)
+
+The control stack is organized as layered domains to keep high-level policy independent from motor-control internals.
+
+### Conceptual pipeline
+
+```text
+Raw Joystick Input
+→ User Intent / Policy Layer
+→ Longitudinal + Steering Intent
+→ Torque Mapping / Mixing
+→ Wheel Torque Commands
+→ FOC (16 kHz motor control domain)
+```
+
+### Layer responsibilities
+
+- **Raw Joystick/Input Domain**: acquisition and normalization of ADC/UART/PPM/PWM/Nunchuk signals into `input1/input2` raw values.
+- **User Intent / Policy Layer**: input-domain interpretation of human commands into high-level longitudinal/steering intent (no torque-domain filtering here).
+- **Torque Mapping / Mixing Domain**: speed-intent to torque-request conversion (gain-only P on combined vehicle speed), asymmetric ramp limiting (slow-up/fast-down), and per-wheel left/right mixing/sign mapping.
+- **FOC Domain (16 kHz ISR)**: high-rate motor control internals that execute torque/voltage/speed control and PWM generation.
+
+This separation is intentional: user interaction policy should evolve without forcing changes in torque internals or FOC timing-critical code.
+In this architecture, neutral offset learning lives in the input-facing Command Filtering layer, while command deadband/sign hysteresis live in the User Intent layer; wheel-domain shaping is kept for wheel command smoothing only. Directional ZERO_LATCH is implemented as armed-on-reversal and active-at-standstill to block only opposite-direction engagement for a short guard window.
+
+### Setpoint architecture rollout status
+
+- Step A is complete and successful: command filtering ownership is active, and neutral offset learning now runs in `command_filter` close to raw input.
+- Step B is complete and successful: `DRIVE_FORWARD`/`DRIVE_REVERSE`/`ZERO_LATCH` intent-state behavior is enabled, with user-intent hysteresis (50 on / 35 off) and debug telemetry fields (`iMode`, `zLatchMs`, `zRel`) for deterministic bench validation. `ZERO_LATCH` arm/activate/release decisions are based on measured speed (`speedAvg`) entering/leaving near-zero, not on setpoint reaching zero.
+- Step C is complete and successful: `velocity_setpoint_layer` now enforces asymmetric trajectory shaping (slow-up / fast-down) with measured-speed slip-gap clamp (`slip`).
+- Step D is complete and successful: slip-gap policy now uses enter/release hysteresis in `velocity_setpoint_layer`; accel/jerk tuning is now configured in physical units (mm/s^2, mm/s^3) normalized using 40 cm wheel geometry; TRQ-mode torque requests are soft-limited while slip clamp is active (`SOFT_LIMIT_TORQUE_WHEN_SLIP`) without changing generated hard-limit ownership.
+- Step E is complete and successful: an outer velocity PI controller now maps `v_sp` to torque request in the main loop (with saturation + anti-windup), replacing the temporary gain-only speed-to-torque path.
+
+
+### Neutral offset calibration behavior (current implementation)
+
+- At boot, command filtering runs deterministic two-stage offset calibration for **both longitudinal and steering** axes:
+  - **0–1 s settle window**: no sampling, just wait for input interface startup jitter to settle.
+  - **1–2 s sample window**: average raw command samples per axis.
+- At the end of sampling, each axis latches its averaged neutral offset (clamped by `COMMAND_FILTER_OFFSET_MAX`).
+- **Safety latch**: while either axis is still in boot calibration, torque command is force-suppressed to zero (`calibI=1` in debug), so no drive torque is sent to the wheels during calibration.
+- After boot calibration is locked, bounded adaptive recentering is still available in near-neutral zone for slow drift compensation.
+
+### Housekeeping rules
+
+- Any significant architectural change **must** update this README.
+- High-level control policy must remain separate from motor-control internals.
+- No direct joystick-to-torque shortcuts are allowed outside the User Intent layer.
+- All new control behavior must enter through the User Intent layer first, then flow into torque mapping.
 
 ---
 ## Hardware

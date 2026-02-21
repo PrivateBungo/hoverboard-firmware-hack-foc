@@ -10,28 +10,31 @@
 */
 
 #include "drive_control.h"
-#include "drive_math.h"
 #include "config.h"
+#include "drive_math.h"
 
-void DriveControl_Init(DriveControlState *state) {
-  DriveControl_ResetFilters(state);
+static int16_t DriveControl_ClampS16(int32_t value, int16_t lower, int16_t upper) {
+  if (value < lower) {
+    return lower;
+  }
+  if (value > upper) {
+    return upper;
+  }
+  return (int16_t)value;
 }
 
-void DriveControl_ResetFilters(DriveControlState *state) {
-  state->steerRateFixdt = 0;
-  state->speedRateFixdt = 0;
-  state->steerFixdt = 0;
-  state->speedFixdt = 0;
-}
+int16_t DriveControl_ApplySlipSoftLimit(int16_t torqueCmd, uint8_t slipGapClampActive, int16_t softLimit) {
+  int16_t torqueLimit = (softLimit >= 0) ? softLimit : (int16_t)-softLimit;
 
-void DriveControl_FilterInputs(DriveControlState *state, int16_t steerCmd, int16_t speedCmd, uint16_t rate, int16_t *steer, int16_t *speed) {
-  rateLimiter16(steerCmd, rate, &state->steerRateFixdt);
-  rateLimiter16(speedCmd, rate, &state->speedRateFixdt);
-  filtLowPass32(state->steerRateFixdt >> 4, FILTER, &state->steerFixdt);
-  filtLowPass32(state->speedRateFixdt >> 4, FILTER, &state->speedFixdt);
+  if (slipGapClampActive == 0U) {
+    return torqueCmd;
+  }
 
-  *steer = (int16_t)(state->steerFixdt >> 16);
-  *speed = (int16_t)(state->speedFixdt >> 16);
+  if (torqueLimit <= 0) {
+    return 0;
+  }
+
+  return DriveControl_ClampS16(torqueCmd, (int16_t)-torqueLimit, torqueLimit);
 }
 
 void DriveControl_MixCommands(int16_t speed, int16_t steer, int16_t *cmdL, int16_t *cmdR) {
