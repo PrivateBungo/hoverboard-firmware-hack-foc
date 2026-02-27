@@ -39,11 +39,6 @@
 #include "input_supervisor.h"
 #include "mode_supervisor.h"
 
-#define TROUBLESHOOT_ACCEL_UP_MMPS2      1500
-#define TROUBLESHOOT_ACCEL_DOWN_MMPS2    10000
-#define TROUBLESHOOT_RAMP_Q_SHIFT        10
-#define TROUBLESHOOT_RAMP_Q_SCALE        (1 << TROUBLESHOOT_RAMP_Q_SHIFT)
-
 #include "stall_supervisor.h"
 #include "wheel_command_supervisor.h"
 #include "uart_reporting.h"
@@ -292,7 +287,6 @@ int main(void) {
     int32_t troubleshootingVelIntegratorLeft = 0;
     int32_t troubleshootingVelIntegratorRight = 0;
     int16_t troubleshootingVelocitySetpointRpmActive = 0;
-    int32_t troubleshootingVelocitySetpointRpmQActive = 0;
     int16_t cmdL_adj = 0;
     int16_t cmdR_adj = 0;
   #endif
@@ -439,7 +433,6 @@ int main(void) {
         troubleshootingVelIntegratorLeft = 0;
         troubleshootingVelIntegratorRight = 0;
         troubleshootingVelocitySetpointRpmActive = 0;
-        troubleshootingVelocitySetpointRpmQActive = 0;
         DriveControl_ResetStallDecay(&stallDecayStateLeft);
         DriveControl_ResetStallDecay(&stallDecayStateRight);
         enable = 1;                       // enable motors
@@ -554,7 +547,6 @@ int main(void) {
         troubleshootingVelIntegratorLeft = 0;
         troubleshootingVelIntegratorRight = 0;
         troubleshootingVelocitySetpointRpmActive = 0;
-        troubleshootingVelocitySetpointRpmQActive = 0;
         DriveControl_ResetStallDecay(&stallDecayStateLeft);
         DriveControl_ResetStallDecay(&stallDecayStateRight);
         WheelCommandSupervisor_Init(&wheelCommandSupervisorState);
@@ -594,54 +586,8 @@ int main(void) {
         velSetpointRpmFixdt = (int32_t)speed * (int32_t)speedMaxRpm;
         velSetpointRpm = (int16_t)(velSetpointRpmFixdt / 1000);
 
-        {
-          int32_t targetSetpointQ = (int32_t)velSetpointRpm * (int32_t)TROUBLESHOOT_RAMP_Q_SCALE;
-          int32_t deltaSetpointQ = targetSetpointQ - troubleshootingVelocitySetpointRpmQActive;
-          int32_t accelUpRpmPerLoopQ;
-          int32_t accelDownRpmPerLoopQ;
-          int32_t rampStepQ;
-
-          accelUpRpmPerLoopQ = (int32_t)((((int64_t)TROUBLESHOOT_ACCEL_UP_MMPS2 * 60 * (int32_t)(DELAY_IN_MAIN_LOOP + 1U) *
-                                          (int32_t)TROUBLESHOOT_RAMP_Q_SCALE) +
-                                         (((int64_t)SETPOINT_WHEEL_CIRCUMFERENCE_MM * 1000) / 2)) /
-                                        ((int64_t)SETPOINT_WHEEL_CIRCUMFERENCE_MM * 1000));
-          accelDownRpmPerLoopQ = (int32_t)((((int64_t)TROUBLESHOOT_ACCEL_DOWN_MMPS2 * 60 * (int32_t)(DELAY_IN_MAIN_LOOP + 1U) *
-                                            (int32_t)TROUBLESHOOT_RAMP_Q_SCALE) +
-                                           (((int64_t)SETPOINT_WHEEL_CIRCUMFERENCE_MM * 1000) / 2)) /
-                                          ((int64_t)SETPOINT_WHEEL_CIRCUMFERENCE_MM * 1000));
-
-          if (accelUpRpmPerLoopQ < 1) {
-            accelUpRpmPerLoopQ = 1;
-          }
-          if (accelDownRpmPerLoopQ < 1) {
-            accelDownRpmPerLoopQ = 1;
-          }
-
-          if (deltaSetpointQ != 0) {
-            int32_t activeAbs = (troubleshootingVelocitySetpointRpmActive >= 0) ?
-                                 troubleshootingVelocitySetpointRpmActive : -troubleshootingVelocitySetpointRpmActive;
-            int32_t targetAbs = (velSetpointRpm >= 0) ? velSetpointRpm : -velSetpointRpm;
-            uint8_t sameDirection = (uint8_t)((troubleshootingVelocitySetpointRpmActive == 0) ||
-                                              ((troubleshootingVelocitySetpointRpmActive > 0) == (velSetpointRpm > 0)));
-            uint8_t isRampUp = (uint8_t)(sameDirection && (targetAbs > activeAbs));
-            int32_t stepLimitQ = isRampUp ? accelUpRpmPerLoopQ : accelDownRpmPerLoopQ;
-
-            if (deltaSetpointQ > 0) {
-              rampStepQ = (deltaSetpointQ > stepLimitQ) ? stepLimitQ : deltaSetpointQ;
-            } else {
-              int32_t decelStepQ = -deltaSetpointQ;
-              rampStepQ = (decelStepQ > stepLimitQ) ? -stepLimitQ : deltaSetpointQ;
-            }
-          } else {
-            rampStepQ = 0;
-          }
-
-          troubleshootingVelocitySetpointRpmQActive = CLAMP((troubleshootingVelocitySetpointRpmQActive + rampStepQ),
-                                                            -(speedMaxRpm * TROUBLESHOOT_RAMP_Q_SCALE),
-                                                            (speedMaxRpm * TROUBLESHOOT_RAMP_Q_SCALE));
-          troubleshootingVelocitySetpointRpmActive = (int16_t)(troubleshootingVelocitySetpointRpmQActive / TROUBLESHOOT_RAMP_Q_SCALE);
-          setpointDeltaRpm = (int16_t)(rampStepQ / TROUBLESHOOT_RAMP_Q_SCALE);
-        }
+        setpointDeltaRpm = (int16_t)(velSetpointRpm - troubleshootingVelocitySetpointRpmActive);
+        troubleshootingVelocitySetpointRpmActive = velSetpointRpm;
 
         measuredSpeedLeft = (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_LEFT);
         measuredSpeedRight = (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_RIGHT);
