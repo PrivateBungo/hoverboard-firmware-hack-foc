@@ -317,12 +317,32 @@ both wheels.
 | Defined in | `Inc/config.h`, inside `#ifdef VARIANT_USART` |
 | Input range | `speed` field –1000 … 1000 (normalized torque) |
 | Steer field | Ignored (treated as 0) |
+| FOC mode | Automatically forced to `TRQ_MODE` (FOC current/torque loop closed) |
 | Per-motor inversion | Respected (`INVERT_L_DIRECTION` / `INVERT_R_DIRECTION`) |
 | Safety features | All preserved: stall decay, stall supervisor, enable gating, timeout |
 | Feedback | `SerialFeedback` frames continue to be sent unchanged |
 
 **Sign convention:** positive `speed` value → forward torque on both wheels (same
 as the existing velocity-control mode).
+
+### How the control path works
+
+```
+UART frame → parse SerialCommand.speed field
+           → CLAMP to [-1000, 1000]
+           → cmdL = cmdR = torque_cmd
+           → DriveControl_MapCommandsToPwm (applies INVERT_x_DIRECTION)
+           → BLDC FOC controller in TRQ_MODE
+               ↳ Hall sensors used for rotor position estimate
+               ↳ Phase current measurement closes the current/torque loop
+               ↳ Smooth, quiet motor response proportional to the command
+```
+
+The BLDC FOC controller **always** reads Hall sensors to estimate rotor position —
+that is how FOC works.  What changes in `TRQ_MODE` is that the controller regulates
+*phase current* (proportional to torque) instead of *voltage*.  This eliminates the
+cogging and Hall-transition noise that is audible in voltage mode.  A constant torque
+command therefore produces smooth, continuous acceleration up to terminal velocity.
 
 ### When to use it
 
@@ -338,7 +358,8 @@ as the existing velocity-control mode).
    ```c
    #define CONTROL_SERIAL_TORQUE_DIRECT    // [-] Bypass velocity PI; map UART speed field directly to per-wheel torque
    ```
-3. Rebuild and flash.
+3. Rebuild and flash.  `CTRL_MOD_REQ` is automatically set to `TRQ_MODE` — no
+   other config change is required.
 
 ### Host-side test script
 

@@ -310,6 +310,9 @@
   // Sign convention: positive speed → forward torque on both wheels.
   // Per-motor direction inversion is still respected via INVERT_L_DIRECTION /
   // INVERT_R_DIRECTION if those are defined.
+  // Note: CTRL_MOD_REQ is automatically forced to TRQ_MODE when this flag is set,
+  // so the BLDC FOC controller closes the current (torque) loop rather than running
+  // in voltage mode.  No manual change to CTRL_MOD_REQ is needed.
   // #define CONTROL_SERIAL_TORQUE_DIRECT    // [-] Bypass velocity PI; map UART speed field directly to per-wheel torque
 #endif
 // ######################## END OF VARIANT_USART SETTINGS #########################
@@ -649,6 +652,14 @@
   #define INPUTS_NR               2
 #else
   #define INPUTS_NR               1
+#endif
+
+// CONTROL_SERIAL_TORQUE_DIRECT requires FOC torque mode so that cmdL/cmdR are
+// interpreted as current (torque) setpoints by the BLDC controller, not as
+// voltage commands.  Override any earlier CTRL_MOD_REQ setting here.
+#ifdef CONTROL_SERIAL_TORQUE_DIRECT
+  #undef  CTRL_MOD_REQ
+  #define CTRL_MOD_REQ  TRQ_MODE
 #endif
 // ########################### END OF APPLY DEFAULT SETTING ############################
 
