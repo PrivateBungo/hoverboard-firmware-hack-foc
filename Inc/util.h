@@ -127,5 +127,8 @@ typedef struct {
 } MultipleTap;
 void multipleTapDet(int16_t u, uint32_t timeNow, MultipleTap *x);
 
-#endif
+// Effective (gated) motor error state used by top-level safety logic.
+extern uint8_t g_errCodeLeftEffective;
+extern uint8_t g_errCodeRightEffective;
 
+#endif
