@@ -237,6 +237,7 @@ void BLDC_Init(void) {
   rtP_Left.b_diagEna            = DIAG_ENA;
   rtP_Left.i_max                = (I_MOT_MAX * A2BIT_CONV) << 4;        // fixdt(1,16,4)
   rtP_Left.n_max                = N_MOT_MAX << 4;                       // fixdt(1,16,4)
+  rtP_Left.n_stdStillDet        = MOTOR_CTRL_STANDSTILL_GATE_RPM << 4;  // fixdt(1,16,4)
   rtP_Left.b_fieldWeakEna       = FIELD_WEAK_ENA; 
   rtP_Left.id_fieldWeakMax      = (FIELD_WEAK_MAX * A2BIT_CONV) << 4;   // fixdt(1,16,4)
   rtP_Left.a_phaAdvMax          = PHASE_ADV_MAX << 4;                   // fixdt(1,16,4)
