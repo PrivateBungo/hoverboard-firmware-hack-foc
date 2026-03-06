@@ -302,6 +302,80 @@ Press **Ctrl+C** to stop – the script sends `speed=0` before closing the port.
 
 
 ---
+## UART Torque-Direct Mode (`CONTROL_SERIAL_TORQUE_DIRECT`)
+
+### Overview
+
+This optional compile-time mode provides a **simplified, PI-free control path** for
+UART input.  Instead of running the outer velocity PI controller, the `speed` field
+of every received `SerialCommand` frame is applied *directly* as a torque command to
+both wheels.
+
+| Property | Value |
+|---|---|
+| Config flag | `CONTROL_SERIAL_TORQUE_DIRECT` |
+| Defined in | `Inc/config.h`, inside `#ifdef VARIANT_USART` |
+| Input range | `speed` field –1000 … 1000 (normalized torque) |
+| Steer field | Ignored (treated as 0) |
+| Per-motor inversion | Respected (`INVERT_L_DIRECTION` / `INVERT_R_DIRECTION`) |
+| Safety features | All preserved: stall decay, stall supervisor, enable gating, timeout |
+| Feedback | `SerialFeedback` frames continue to be sent unchanged |
+
+**Sign convention:** positive `speed` value → forward torque on both wheels (same
+as the existing velocity-control mode).
+
+### When to use it
+
+- You want **direct torque response** without any PI wind-up, overshoot or
+  oscillation.
+- You are implementing your own outer control loop on the host side and only need
+  the board to act as a torque actuator.
+
+### How to enable
+
+1. Open `Inc/config.h` and locate the `VARIANT_USART` section.
+2. Uncomment the line:
+   ```c
+   #define CONTROL_SERIAL_TORQUE_DIRECT    // [-] Bypass velocity PI; map UART speed field directly to per-wheel torque
+   ```
+3. Rebuild and flash.
+
+### Host-side test script
+
+[`tools/scripts/uart_control_test.py`](/tools/scripts/uart_control_test.py)
+supports torque mode via the `--mode torque` flag:
+
+```bash
+# Install dependency (once)
+pip install pyserial
+
+# Bench test in torque mode – sends torque=0 (safe, no movement)
+python3 tools/scripts/uart_control_test.py --port /dev/ttyUSB0 --mode torque
+
+# Apply torque=200 after a gentle ramp (steer is forced to 0)
+python3 tools/scripts/uart_control_test.py --port /dev/ttyUSB0 --mode torque --speed 200
+```
+
+Example output:
+```
+Opening /dev/ttyUSB0 at 115200 baud (8N1)…
+Mode: TORQUE DIRECT (steer=0, speed field used as torque command).
+Firmware must have CONTROL_SERIAL_TORQUE_DIRECT defined.
+Ramping toward torque=200.
+Press Ctrl+C to stop safely.
+
+[TX] mode=torque  steer=    0  torque=    0
+[FB] cmd1=    0  cmd2=    0  speedR=    0  speedL=    0  bat=42.00V  temp=28°C  led=0x0000
+[TX] mode=torque  steer=    0  torque=   10
+[FB] cmd1=    0  cmd2=   10  speedR=    3  speedL=    4  bat=41.98V  temp=28°C  led=0x0000
+…
+```
+
+Press **Ctrl+C** to stop – the script sends `torque=0` before closing the port.
+
+
+
+---
 ## Projects and Links
 
 - **Original firmware:** [https://github.com/lucysrausch/hoverboard-firmware-hack](https://github.com/lucysrausch/hoverboard-firmware-hack)

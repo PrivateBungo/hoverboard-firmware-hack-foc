@@ -35,10 +35,15 @@ Protocol (little-endian, all fields 2 bytes):
 
 Usage:
     python3 uart_control_test.py [--port /dev/ttyUSB0] [--speed 100] [--steer 0]
+                                 [--mode speed|torque]
 
     --port   Serial device (default: /dev/ttyUSB0)
-    --speed  Fixed speed command to hold after ramp  (default: 0 = safe bench test)
-    --steer  Fixed steer command to hold             (default: 0)
+    --speed  Fixed speed/torque command to hold after ramp  (default: 0 = safe bench test)
+    --steer  Fixed steer command to hold (ignored in torque mode) (default: 0)
+    --mode   Control mode: 'speed' (default) or 'torque'.
+             In 'torque' mode the speed field is sent as a direct torque command
+             and steer is forced to 0.  Requires CONTROL_SERIAL_TORQUE_DIRECT to
+             be enabled in Inc/config.h on the firmware side.
 
 Press Ctrl+C to stop and send speed=0 before exiting.
 """
@@ -171,13 +176,19 @@ def main() -> None:
     )
     parser.add_argument("--port",  default="/dev/ttyUSB0", help="Serial device")
     parser.add_argument("--speed", type=int, default=0,
-                        help="Target speed command [-1000, 1000] (default 0)")
+                        help="Target speed/torque command [-1000, 1000] (default 0)")
     parser.add_argument("--steer", type=int, default=0,
-                        help="Steer command       [-1000, 1000] (default 0)")
+                        help="Steer command [-1000, 1000] (default 0); ignored in torque mode")
+    parser.add_argument("--mode", choices=["speed", "torque"], default="speed",
+                        help="Control mode: 'speed' (default) uses normal velocity control; "
+                             "'torque' sends speed field as direct torque command with steer "
+                             "fixed at 0 (requires CONTROL_SERIAL_TORQUE_DIRECT in firmware)")
     args = parser.parse_args()
 
     target_speed = max(-1000, min(1000, args.speed))
-    target_steer = max(-1000, min(1000, args.steer))
+    torque_mode  = (args.mode == "torque")
+    # In torque mode steer is always 0; otherwise use the provided value
+    target_steer = 0 if torque_mode else max(-1000, min(1000, args.steer))
 
     print(f"Opening {args.port} at {BAUD_RATE} baud (8N1)…")
     try:
@@ -185,11 +196,19 @@ def main() -> None:
     except serial.SerialException as exc:
         sys.exit(f"Cannot open serial port: {exc}")
 
-    print(
-        "Connected. Starting with speed=0, steer=0.\n"
-        f"Ramping toward speed={target_speed}, steer={target_steer}.\n"
-        "Press Ctrl+C to stop safely.\n"
-    )
+    if torque_mode:
+        print(
+            "Mode: TORQUE DIRECT (steer=0, speed field used as torque command).\n"
+            "Firmware must have CONTROL_SERIAL_TORQUE_DIRECT defined.\n"
+            f"Ramping toward torque={target_speed}.\n"
+            "Press Ctrl+C to stop safely.\n"
+        )
+    else:
+        print(
+            "Mode: SPEED (velocity PI control).\n"
+            f"Ramping toward speed={target_speed}, steer={target_steer}.\n"
+            "Press Ctrl+C to stop safely.\n"
+        )
 
     # Start background reader
     reader = threading.Thread(target=feedback_reader, args=(ser,), daemon=True)
@@ -198,7 +217,7 @@ def main() -> None:
     current_speed = 0
     try:
         while True:
-            # Gentle linear ramp toward target speed
+            # Gentle linear ramp toward target speed/torque
             if current_speed < target_speed:
                 current_speed = min(current_speed + RAMP_STEP, target_speed)
             elif current_speed > target_speed:
@@ -206,10 +225,16 @@ def main() -> None:
 
             frame = build_command(target_steer, current_speed)
             ser.write(frame)
-            print(
-                f"[TX] steer={target_steer:5d}  speed={current_speed:5d}",
-                flush=True,
-            )
+            if torque_mode:
+                print(
+                    f"[TX] mode=torque  steer={target_steer:5d}  torque={current_speed:5d}",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"[TX] mode=speed   steer={target_steer:5d}  speed={current_speed:5d}",
+                    flush=True,
+                )
             time.sleep(SEND_INTERVAL_S)
 
     except KeyboardInterrupt:

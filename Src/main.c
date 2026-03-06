@@ -289,10 +289,12 @@ int main(void) {
     uint8_t setpointSlipGapClampActive = 0U;
     int16_t motorControllerSpeedErrorOut = 0;
     uint8_t motorControllerSaturatedOut = 0U;
+    #ifndef CONTROL_SERIAL_TORQUE_DIRECT
     int32_t troubleshootingVelIntegratorLeft = 0;
     int32_t troubleshootingVelIntegratorRight = 0;
     int16_t troubleshootingVelocitySetpointRpmActive = 0;
     int32_t troubleshootingVelocitySetpointRpmQActive = 0;
+    #endif
     int16_t cmdL_adj = 0;
     int16_t cmdR_adj = 0;
   #endif
@@ -436,10 +438,12 @@ int main(void) {
         IntentStateMachine_Reset(&intentStateMachineState);
         VelocitySetpointLayer_Reset(&velocitySetpointLayerState);
         MotorController_Reset(&motorControllerState);
+        #ifndef CONTROL_SERIAL_TORQUE_DIRECT
         troubleshootingVelIntegratorLeft = 0;
         troubleshootingVelIntegratorRight = 0;
         troubleshootingVelocitySetpointRpmActive = 0;
         troubleshootingVelocitySetpointRpmQActive = 0;
+        #endif
         DriveControl_ResetStallDecay(&stallDecayStateLeft);
         DriveControl_ResetStallDecay(&stallDecayStateRight);
         enable = 1;                       // enable motors
@@ -551,10 +555,12 @@ int main(void) {
         IntentStateMachine_Reset(&intentStateMachineState);
         VelocitySetpointLayer_Reset(&velocitySetpointLayerState);
         MotorController_Reset(&motorControllerState);
+        #ifndef CONTROL_SERIAL_TORQUE_DIRECT
         troubleshootingVelIntegratorLeft = 0;
         troubleshootingVelIntegratorRight = 0;
         troubleshootingVelocitySetpointRpmActive = 0;
         troubleshootingVelocitySetpointRpmQActive = 0;
+        #endif
         DriveControl_ResetStallDecay(&stallDecayStateLeft);
         DriveControl_ResetStallDecay(&stallDecayStateRight);
         WheelCommandSupervisor_Init(&wheelCommandSupervisorState);
@@ -567,6 +573,26 @@ int main(void) {
        * - Apply a PI regulator to produce torque command
        * - Keep steering/mixing disabled (independent per-wheel PI torque loops)
        */
+      #ifdef CONTROL_SERIAL_TORQUE_DIRECT
+      /*
+       * UART torque-direct mode (CONTROL_SERIAL_TORQUE_DIRECT):
+       * Bypass the velocity PI controller and apply the UART speed field
+       * directly as a torque command to both wheels identically.
+       * - speed [-1000..1000] → torque_cmd applied to cmdL and cmdR
+       * - steer field is ignored (set to 0 above)
+       * - Safety limits, stall protection, and enable/timeout gating remain active
+       */
+      {
+        int16_t torqueCmd = (int16_t)CLAMP(speed, -MOTOR_CTRL_TORQUE_MAX, MOTOR_CTRL_TORQUE_MAX);
+        cmdL = torqueCmd;
+        cmdR = torqueCmd;
+
+        setpointVelocityOut = 0;
+        setpointAccelerationOut = 0;
+        motorControllerSpeedErrorOut = 0;
+        motorControllerSaturatedOut = 0U;
+      }
+      #else
       {
         int16_t speedMaxRpm = (int16_t)(rtP_Left.n_max >> 4);
         int32_t velSetpointRpmFixdt;
@@ -724,6 +750,7 @@ int main(void) {
         motorControllerSpeedErrorOut = (int16_t)((speedErrorRpmLeft + speedErrorRpmRight) / 2);
         motorControllerSaturatedOut = (uint8_t)(saturatedLeft || saturatedRight);
       }
+      #endif /* CONTROL_SERIAL_TORQUE_DIRECT */
 
       intentVelocityOut = setpointVelocityOut;
       intentCmdEffOut = setpointVelocityOut;

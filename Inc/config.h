@@ -300,6 +300,17 @@
   // #define TANK_STEERING              // use for tank steering, each input controls each wheel 
   // #define SUPPORT_BUTTONS_LEFT       // use left sensor board cable for button inputs.  Disable DEBUG_SERIAL_USART2!
   // #define SUPPORT_BUTTONS_RIGHT      // use right sensor board cable for button inputs. Disable DEBUG_SERIAL_USART3!
+
+  // ---- Simplified UART torque-direct mode ----
+  // Uncomment to enable CONTROL_SERIAL_TORQUE_DIRECT.
+  // In this mode the UART speed field [-1000..1000] is used directly as a torque command
+  // applied identically to both wheels.  The outer velocity PI controller is bypassed.
+  // The steer field is ignored.  All existing safety limits, stall protection, and
+  // enable/timeout gating remain active.
+  // Sign convention: positive speed → forward torque on both wheels.
+  // Per-motor direction inversion is still respected via INVERT_L_DIRECTION /
+  // INVERT_R_DIRECTION if those are defined.
+  // #define CONTROL_SERIAL_TORQUE_DIRECT    // [-] Bypass velocity PI; map UART speed field directly to per-wheel torque
 #endif
 // ######################## END OF VARIANT_USART SETTINGS #########################
 
@@ -755,6 +766,10 @@
 // Functional checks
 #if (defined(CONTROL_PPM_LEFT) || defined(CONTROL_PPM_RIGHT)) && !defined(PPM_NUM_CHANNELS)
   #error Total number of PPM channels needs to be set
+#endif
+
+#if defined(CONTROL_SERIAL_TORQUE_DIRECT) && !defined(CONTROL_SERIAL_USART2) && !defined(CONTROL_SERIAL_USART3)
+  #error CONTROL_SERIAL_TORQUE_DIRECT requires CONTROL_SERIAL_USART2 or CONTROL_SERIAL_USART3 to be defined.
 #endif
 // ############################# END OF VALIDATE SETTINGS ############################
 
