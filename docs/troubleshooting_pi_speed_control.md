@@ -217,7 +217,7 @@ calcAvgSpeed() (util.c):
   speedAvg  = +n_mot_left  (default, no INVERT_L)
   speedAvg -= +n_mot_right (default, no INVERT_R → subtract because mirrored)
   speedAvg /= 2
-  if (SPEED_COEFFICIENT & (1 << 15)): speedAvg = -speedAvg  // MSB of Q14 fixdt
+  if (SPEED_COEFFICIENT & (1 << 15)): speedAvg = -speedAvg  // bit 15 = sign bit of 16-bit fixdt(1,16,14) container
 
 PI controller (main.c):
   measuredSpeedLeft  = +n_mot_left   (no INVERT_L)

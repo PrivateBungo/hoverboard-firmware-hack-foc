@@ -184,9 +184,12 @@ the values in the frame:
 | both | `−n_mot_left` | `+n_mot_right` |
 | `SPEED_COEFFICIENT` negative | all of the above additionally negated |
 
-The "negative" check for `SPEED_COEFFICIENT` tests bit 15 of the Q14 fixdt value
-(`SPEED_COEFFICIENT & (1 << 15)`), which is the MSB of the 16-bit signed representation.
-All standard variants use positive values (e.g. 16384 = 1.0), so this path is
+The "negative" check for `SPEED_COEFFICIENT` tests bit 15 of the value
+(`SPEED_COEFFICIENT & (1 << 15)`).  `SPEED_COEFFICIENT` uses the `fixdt(1,16,14)`
+Simulink fixed-point type: 1 sign bit, 16-bit container, 14 fractional bits.
+Bit 15 is therefore the sign bit (MSB) of the 16-bit container; when set the
+coefficient is negative and all speeds are additionally inverted.
+All standard variants use positive values (e.g. 16384 = 1.0 × 2¹⁴), so this path is
 inactive in normal use.
 
 This means **both speed fields are positive when the board moves forward** for the

@@ -28,8 +28,9 @@
  *   Too high → integrator winds up quickly → large overshoot when
  *              external load (e.g. hand on wheel) is suddenly removed.
  *   Too low  → slow steady-state correction, speed droops under load.
- *   Effective rate = KI_float / loop_period_s.  At 200 Hz, KI=0.02 gives
- *   4 torque-units/sec per 1 rpm of steady error.
+ *   Effective integration rate [torque/sec/rpm] = KI_float × loop_freq_hz
+ *   (equivalently KI_float / loop_period_s).  At 200 Hz, KI=0.02 gives
+ *   0.02 × 200 = 4 torque-units/sec per 1 rpm of steady error.
  *
  * INT_LIM (integrator clamp, torque-command units):
  *   Limits how much the integral can accumulate.
