@@ -293,6 +293,12 @@ int main(void) {
     int32_t troubleshootingVelIntegratorRight = 0;
     int16_t troubleshootingVelocitySetpointRpmActive = 0;
     int32_t troubleshootingVelocitySetpointRpmQActive = 0;
+    int16_t troubleshootingMeasuredSpeedLeft = 0;
+    int16_t troubleshootingMeasuredSpeedRight = 0;
+    int16_t troubleshootingSpeedErrorLeft = 0;
+    int16_t troubleshootingSpeedErrorRight = 0;
+    int16_t troubleshootingTorqueCmdLeft = 0;
+    int16_t troubleshootingTorqueCmdRight = 0;
     int16_t cmdL_adj = 0;
     int16_t cmdR_adj = 0;
   #endif
@@ -667,8 +673,24 @@ int main(void) {
         pTermLeft = ((int32_t)speedErrorRpmLeft * (int32_t)MOTOR_CTRL_VEL_KP_Q15) >> 15;
         pTermRight = ((int32_t)speedErrorRpmRight * (int32_t)MOTOR_CTRL_VEL_KP_Q15) >> 15;
 
-        iCandidateLeft = troubleshootingVelIntegratorLeft + ((((int32_t)speedErrorRpmLeft * (int32_t)MOTOR_CTRL_VEL_KI_Q15) >> 15));
-        iCandidateRight = troubleshootingVelIntegratorRight + ((((int32_t)speedErrorRpmRight * (int32_t)MOTOR_CTRL_VEL_KI_Q15) >> 15));
+        /*
+         * Standstill integrator gate: freeze the integrator when both the
+         * velocity setpoint and the measured wheel speed are below the gate
+         * threshold.  Hall-sensor quantization (±1 rpm) at standstill would
+         * otherwise wind the integrator up and cause sudden torque bursts
+         * (the "clanky" low-speed behaviour).
+         */
+        {
+          uint8_t gateLeft  = (uint8_t)((ABS(troubleshootingVelocitySetpointRpmActive) <= MOTOR_CTRL_STANDSTILL_GATE_RPM) &&
+                                         (ABS(measuredSpeedLeft)  <= MOTOR_CTRL_STANDSTILL_GATE_RPM));
+          uint8_t gateRight = (uint8_t)((ABS(troubleshootingVelocitySetpointRpmActive) <= MOTOR_CTRL_STANDSTILL_GATE_RPM) &&
+                                         (ABS(measuredSpeedRight) <= MOTOR_CTRL_STANDSTILL_GATE_RPM));
+
+          iCandidateLeft  = gateLeft  ? troubleshootingVelIntegratorLeft  :
+                            (troubleshootingVelIntegratorLeft  + (((int32_t)speedErrorRpmLeft  * (int32_t)MOTOR_CTRL_VEL_KI_Q15) >> 15));
+          iCandidateRight = gateRight ? troubleshootingVelIntegratorRight :
+                            (troubleshootingVelIntegratorRight + (((int32_t)speedErrorRpmRight * (int32_t)MOTOR_CTRL_VEL_KI_Q15) >> 15));
+        }
 
         if (iCandidateLeft > MOTOR_CTRL_INT_LIM) {
           iCandidateLeft = MOTOR_CTRL_INT_LIM;
@@ -723,6 +745,14 @@ int main(void) {
         setpointAccelerationOut = setpointDeltaRpm;
         motorControllerSpeedErrorOut = (int16_t)((speedErrorRpmLeft + speedErrorRpmRight) / 2);
         motorControllerSaturatedOut = (uint8_t)(saturatedLeft || saturatedRight);
+
+        /* Save per-wheel state for diagnostics (accessed outside this scope). */
+        troubleshootingMeasuredSpeedLeft  = measuredSpeedLeft;
+        troubleshootingMeasuredSpeedRight = measuredSpeedRight;
+        troubleshootingSpeedErrorLeft     = speedErrorRpmLeft;
+        troubleshootingSpeedErrorRight    = speedErrorRpmRight;
+        troubleshootingTorqueCmdLeft      = torqueCmdSatLeft;
+        troubleshootingTorqueCmdRight     = torqueCmdSatRight;
       }
 
       intentVelocityOut = setpointVelocityOut;
@@ -1047,7 +1077,7 @@ int main(void) {
       }
 
       if (main_loop_counter % DEBUG_SETPOINT_PRINT_INTERVAL_LOOPS == 0U) {
-        printf("SetpointTrace mode:%s rawLong:%d longOff:%d rawLongMinusOff:%d uCmd:%d cmdEff:%d arm:%d blk:%d nz:%u calibA:%u calibL:%u calibI:%u vIntent:%d vSet:%d aSet:%d vAct:%d vErr:%d vSat:%u slip:%u zLatchMs:%u zRel:%u\r\n",
+        printf("SetpointTrace mode:%s rawLong:%d longOff:%d rawLongMinusOff:%d uCmd:%d cmdEff:%d arm:%d blk:%d nz:%u calibA:%u calibL:%u calibI:%u vIntent:%d vSet:%d aSet:%d vAct:%d vErr:%d vSat:%u slip:%u zLatchMs:%u zRel:%u nL:%d nR:%d errL:%d errR:%d tqL:%d tqR:%d\r\n",
           IntentModeToString((IntentStateMachineMode)intentModeOut),
           longitudinalRawCmd,
           commandFilterLongitudinalOffsetOut,
@@ -1068,7 +1098,13 @@ int main(void) {
           (unsigned)motorControllerSaturatedOut,
           (unsigned)setpointSlipGapClampActive,
           (unsigned)intentZeroLatchElapsedMsOut,
-          (unsigned)intentZeroLatchReleasedOut);
+          (unsigned)intentZeroLatchReleasedOut,
+          (int)troubleshootingMeasuredSpeedLeft,   // nL: left  measured speed [rpm, vehicle-forward sign]
+          (int)troubleshootingMeasuredSpeedRight,  // nR: right measured speed [rpm, vehicle-forward sign]
+          (int)troubleshootingSpeedErrorLeft,      // errL: left  speed error [rpm]
+          (int)troubleshootingSpeedErrorRight,     // errR: right speed error [rpm]
+          (int)troubleshootingTorqueCmdLeft,       // tqL: left  torque command [-1000..1000]
+          (int)troubleshootingTorqueCmdRight);     // tqR: right torque command [-1000..1000]
       }
 
       if (main_loop_counter % DEBUG_INPUT_PRINT_INTERVAL_LOOPS == 0) {    // Send data periodically every ~5 s
@@ -1118,14 +1154,36 @@ int main(void) {
     // ####### FEEDBACK SERIAL OUT #######
     #if defined(FEEDBACK_SERIAL_USART2) || defined(FEEDBACK_SERIAL_USART3)
       if (main_loop_counter % 2 == 0) {    // Send data periodically every 10 ms
+        /*
+         * Normalize per-wheel speeds to vehicle-forward sign convention before
+         * packing into the feedback frame.  Raw n_mot signs are motor-centric:
+         *   - Left  motor: positive n_mot == forward (default)
+         *   - Right motor: positive n_mot == backward (default, opposite winding)
+         * Applying the same sign correction used in calcAvgSpeed() / the PI
+         * controller makes speedR_meas and speedL_meas both positive when the
+         * vehicle moves forward, matching the positive speed command.
+         */
+        int16_t fbSpeedR = (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_RIGHT);
+        int16_t fbSpeedL = (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_LEFT);
+        #if defined(INVERT_L_DIRECTION)
+          fbSpeedL = -fbSpeedL;
+        #endif
+        #if !defined(INVERT_R_DIRECTION)
+          fbSpeedR = -fbSpeedR;
+        #endif
+        if (SPEED_COEFFICIENT & (1 << 16)) {
+          fbSpeedL = -fbSpeedL;
+          fbSpeedR = -fbSpeedR;
+        }
+
         #if defined(FEEDBACK_SERIAL_USART2)
           if(__HAL_DMA_GET_COUNTER(huart2.hdmatx) == 0) {
             UartReporting_PrepareFrame(&feedbackFrame,
                                        (uint16_t)SERIAL_START_FRAME,
                                        (int16_t)input1[inIdx].cmd,
                                        (int16_t)input2[inIdx].cmd,
-                                       (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_RIGHT),
-                                       (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_LEFT),
+                                       fbSpeedR,
+                                       fbSpeedL,
                                        (int16_t)batVoltageCalib,
                                        (int16_t)board_temp_deg_c,
                                        (uint16_t)sideboard_leds_L);
@@ -1139,8 +1197,8 @@ int main(void) {
                                        (uint16_t)SERIAL_START_FRAME,
                                        (int16_t)input1[inIdx].cmd,
                                        (int16_t)input2[inIdx].cmd,
-                                       (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_RIGHT),
-                                       (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_LEFT),
+                                       fbSpeedR,
+                                       fbSpeedL,
                                        (int16_t)batVoltageCalib,
                                        (int16_t)board_temp_deg_c,
                                        (uint16_t)sideboard_leds_R);

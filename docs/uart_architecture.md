@@ -157,14 +157,16 @@ typedef struct {
   uint16_t start;        // 0xABCD
   int16_t  cmd1;         // echoed steer command (input1[inIdx].cmd)
   int16_t  cmd2;         // echoed speed command (input2[inIdx].cmd)
-  int16_t  speedR_meas;  // right motor speed  [rpm-like units from FOC]
-  int16_t  speedL_meas;  // left  motor speed  [rpm-like units from FOC]
+  int16_t  speedR_meas;  // right motor speed [rpm-like units, vehicle-forward sign: positive == forward]
+  int16_t  speedL_meas;  // left  motor speed [rpm-like units, vehicle-forward sign: positive == forward]
   int16_t  batVoltage;   // battery voltage × 100  (e.g. 4200 = 42.00 V)
   int16_t  boardTemp;    // board temperature [°C]
   uint16_t cmdLed;       // LED command flags for sideboard LEDs
   uint16_t checksum;     // XOR of all preceding fields (treated as uint16)
 } SerialFeedback;        // also known as UartReportingFrame in core/io/uart_reporting.h
 ```
+
+Both `speedR_meas` and `speedL_meas` are reported in **vehicle-forward sign convention**: a positive value means the wheel is spinning in the forward direction, matching a positive `cmd2` (speed command). The firmware applies `INVERT_R_DIRECTION` / `INVERT_L_DIRECTION` and the `SPEED_COEFFICIENT` sign before packing, identical to the normalization in `calcAvgSpeed()` and the velocity PI controller.
 
 The checksum covers **all** preceding `uint16`-sized fields:
 `start ^ cmd1 ^ cmd2 ^ speedR_meas ^ speedL_meas ^ batVoltage ^ boardTemp ^ cmdLed`.
@@ -208,8 +210,19 @@ CtrlMode:<x>
 SetpointTrace mode:<FWD|REV|ZL> rawLong:<x> longOff:<x> rawLongMinusOff:<x>
 uCmd:<x> cmdEff:<x> arm:<x> blk:<x> nz:<x> calibA:<x> calibL:<x> calibI:<x>
 vIntent:<x> vSet:<x> aSet:<x> vAct:<x> vErr:<x> vSat:<x> slip:<x>
-zLatchMs:<x> zRel:<x>
+zLatchMs:<x> zRel:<x> nL:<x> nR:<x> errL:<x> errR:<x> tqL:<x> tqR:<x>
 ```
+
+Per-wheel fields added for UART speed-direction diagnostics:
+
+| Field | Description |
+|-------|-------------|
+| `nL`  | Left  wheel measured speed [rpm, vehicle-forward sign] |
+| `nR`  | Right wheel measured speed [rpm, vehicle-forward sign] |
+| `errL` | Left  speed error = setpoint − nL [rpm] |
+| `errR` | Right speed error = setpoint − nR [rpm] |
+| `tqL` | Left  torque command output from PI [-1000..1000] |
+| `tqR` | Right torque command output from PI [-1000..1000] |
 
 ### 6.3 Event-driven lines
 
@@ -332,3 +345,9 @@ comment out `VARIANT_PWM` and uncomment `VARIANT_USART`.
 | Build error: "DEBUG_SERIAL_USART2 and FEEDBACK_SERIAL_USART2 not allowed" | Both are defined simultaneously | Remove one — they share the TX wire |
 | Board does not respond to commands | Check checksum, verify 115200 8N1, confirm `CONTROL_SERIAL_USART2` is compiled in, check serial timeout | — |
 | `uart_control_test.py` shows no feedback | `FEEDBACK_SERIAL_USART2` not active, or TX/RX wires swapped, or DMA stall | Verify wiring: board TX2 → adapter RX, board RX2 ← adapter TX |
+| `speedR_meas` or `speedL_meas` in feedback is **opposite sign** to speed command | Sign-convention mismatch between motor physical winding and vehicle-forward convention. Prior to this firmware fix, the raw `n_mot` value was sent without normalisation; the right motor's positive direction is physically "backward". | Confirm you are running the fixed firmware. If a sign inversion still appears after flashing, one motor's Hall sensors or phase wires may be physically reversed — set `INVERT_R_DIRECTION` / `INVERT_L_DIRECTION` accordingly in `Inc/config.h`. |
+| Wheels spin opposite to commanded direction | `SPEED_COEFFICIENT` sign bit set inadvertently (bit 16), or `INVERT_x_DIRECTION` wrong for physical motor wiring | Check `SPEED_COEFFICIENT` value (must be `0x4000` = 1.0 for default sense); toggle `INVERT_R_DIRECTION` / `INVERT_L_DIRECTION` and verify `speedR_meas`/`speedL_meas` match command sign |
+| Low-speed "clank" or sudden torque bursts at near-zero setpoint | Hall-sensor quantization (±1 rpm) winding the velocity-loop integrator at standstill | Firmware now gates the integrator near zero via `MOTOR_CTRL_STANDSTILL_GATE_RPM` (default 10 rpm). Increase this value in `config/control_tuning/motor_controller_gains.h` if clankiness persists. |
+| Wheel feels "frozen" in one direction, then suddenly moves the other way | Integrator windup while setpoint and speed have opposite signs | Fixed by the standstill gate and the existing anti-windup (integrator frozen when saturated in same direction as error). Enable `DEBUG_SERIAL_USART3` alongside binary control on USART2 to watch `errL`/`errR`/`tqL`/`tqR` in the `SetpointTrace` output. |
+| Slow ~0.3 Hz oscillation at higher speed (e.g. charger-powered) | Outer-loop PI gains too high for the supply impedance / back-EMF at speed | Reduce `MOTOR_CTRL_VEL_KI_Q15` in `config/control_tuning/motor_controller_gains.h`; also verify battery voltage is stable (charger can cause voltage ripple). |
+| `SetpointTrace` shows `nL`/`nR` = 0 even while wheels are spinning | Troubleshooting velocity mode not active, or `MOTOR_LEFT_ENA`/`MOTOR_RIGHT_ENA` not defined | Confirm the troubleshooting block is compiled in (`#ifdef VARIANT_USART` path) and both motor enables are set |

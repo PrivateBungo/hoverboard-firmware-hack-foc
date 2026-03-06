@@ -18,4 +18,13 @@
 #define MOTOR_CTRL_INT_LIM       800    // [-] integrator clamp in torque-command units
 #define MOTOR_CTRL_TORQUE_MAX   1000    // [-] outer-loop torque command saturation before soft limits
 
+/* Standstill integrator gate [rpm]
+ * When BOTH the velocity setpoint and the measured wheel speed are below this
+ * threshold the integrator is frozen.  This prevents Hall-sensor quantization
+ * (±1 rpm steps) from winding the integrator up at standstill, which is the
+ * root cause of the low-speed "clank" and sudden torque bursts.
+ * Set to 0 to disable the gate entirely.
+ */
+#define MOTOR_CTRL_STANDSTILL_GATE_RPM  10   // [rpm]
+
 #endif // MOTOR_CONTROLLER_GAINS_H
