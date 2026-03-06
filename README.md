@@ -12,9 +12,13 @@ Table of Contents
 =======================
 
 * **Wiki:** please check the wiki pages for [Getting Started](https://github.com/EFeru/hoverboard-firmware-hack-FOC/wiki#getting-started) and for [Troubleshooting](https://github.com/EFeru/hoverboard-firmware-hack-FOC/wiki#troubleshooting)
+* [Quick build + flash script](#quick-build--flash-script)
+* [Control Architecture Layers (User Intent vs Torque Domain)](#control-architecture-layers-user-intent-vs-torque-domain)
 * [Hardware](#hardware)
 * [FOC Firmware](#foc-firmware)
 * [Example Variants](#example-variants)
+* [USART2 Control and Feedback on the Left Sensor Cable](#usart2-control-binary-and-feedback-on-the-left-sensor-cable)
+* **[UART Architecture](/docs/uart_architecture.md)** — full guide: roles, conflicts, per-variant allocations, frame formats, printf routing, and troubleshooting
 * [Projects and Links](#projects-and-links)
 * [Contributions](#contributions)
 
@@ -37,6 +41,86 @@ Table of Contents
   </tr>
 </table>
 
+
+---
+## Quick build + flash script
+
+Use these root scripts for explicit workflows:
+
+```bash
+./build-only.sh
+./flash-only.sh
+./combined-build-and-flash.sh
+```
+
+Compatibility alias (still supported):
+
+```bash
+./fw-update.sh
+```
+
+Flash scripts use these defaults (overridable via env vars):
+
+- `PROGRAMMER_CLI=/home/gijs/STMicroelectronics/STM32Cube/STM32CubeProgrammer/bin/STM32_Programmer_CLI`
+- `FIRMWARE_ELF=/home/gijs/Documents/hoverboard-firmware-hack-foc/build/hover.elf`
+
+Example with custom paths:
+
+```bash
+PROGRAMMER_CLI=/path/to/STM32_Programmer_CLI FIRMWARE_ELF=/path/to/build/hover.elf ./flash-only.sh
+```
+
+
+---
+## Control Architecture Layers (User Intent vs Torque Domain)
+
+The control stack is organized as layered domains to keep high-level policy independent from motor-control internals.
+
+### Conceptual pipeline
+
+```text
+Raw Joystick Input
+→ User Intent / Policy Layer
+→ Longitudinal + Steering Intent
+→ Torque Mapping / Mixing
+→ Wheel Torque Commands
+→ FOC (16 kHz motor control domain)
+```
+
+### Layer responsibilities
+
+- **Raw Joystick/Input Domain**: acquisition and normalization of ADC/UART/PPM/PWM/Nunchuk signals into `input1/input2` raw values.
+- **User Intent / Policy Layer**: input-domain interpretation of human commands into high-level longitudinal/steering intent (no torque-domain filtering here).
+- **Torque Mapping / Mixing Domain**: speed-intent to torque-request conversion (gain-only P on combined vehicle speed), asymmetric ramp limiting (slow-up/fast-down), and per-wheel left/right mixing/sign mapping.
+- **FOC Domain (16 kHz ISR)**: high-rate motor control internals that execute torque/voltage/speed control and PWM generation.
+
+This separation is intentional: user interaction policy should evolve without forcing changes in torque internals or FOC timing-critical code.
+In this architecture, neutral offset learning lives in the input-facing Command Filtering layer, while command deadband/sign hysteresis live in the User Intent layer; wheel-domain shaping is kept for wheel command smoothing only. Directional ZERO_LATCH is implemented as armed-on-reversal and active-at-standstill to block only opposite-direction engagement for a short guard window.
+
+### Setpoint architecture rollout status
+
+- Step A is complete and successful: command filtering ownership is active, and neutral offset learning now runs in `command_filter` close to raw input.
+- Step B is complete and successful: `DRIVE_FORWARD`/`DRIVE_REVERSE`/`ZERO_LATCH` intent-state behavior is enabled, with user-intent hysteresis (50 on / 35 off) and debug telemetry fields (`iMode`, `zLatchMs`, `zRel`) for deterministic bench validation. `ZERO_LATCH` arm/activate/release decisions are based on measured speed (`speedAvg`) entering/leaving near-zero, not on setpoint reaching zero.
+- Step C is complete and successful: `velocity_setpoint_layer` now enforces asymmetric trajectory shaping (slow-up / fast-down) with measured-speed slip-gap clamp (`slip`).
+- Step D is complete and successful: slip-gap policy now uses enter/release hysteresis in `velocity_setpoint_layer`; accel/jerk tuning is now configured in physical units (mm/s^2, mm/s^3) normalized using 40 cm wheel geometry; TRQ-mode torque requests are soft-limited while slip clamp is active (`SOFT_LIMIT_TORQUE_WHEN_SLIP`) without changing generated hard-limit ownership.
+- Step E is complete and successful: an outer velocity PI controller now maps `v_sp` to torque request in the main loop (with saturation + anti-windup), replacing the temporary gain-only speed-to-torque path.
+
+
+### Neutral offset calibration behavior (current implementation)
+
+- At boot, command filtering runs deterministic two-stage offset calibration for **both longitudinal and steering** axes:
+  - **0–1 s settle window**: no sampling, just wait for input interface startup jitter to settle.
+  - **1–2 s sample window**: average raw command samples per axis.
+- At the end of sampling, each axis latches its averaged neutral offset (clamped by `COMMAND_FILTER_OFFSET_MAX`).
+- **Safety latch**: while either axis is still in boot calibration, torque command is force-suppressed to zero (`calibI=1` in debug), so no drive torque is sent to the wheels during calibration.
+- After boot calibration is locked, bounded adaptive recentering is still available in near-neutral zone for slow drift compensation.
+
+### Housekeeping rules
+
+- Any significant architectural change **must** update this README.
+- High-level control policy must remain separate from motor-control internals.
+- No direct joystick-to-torque shortcuts are allowed outside the User Intent layer.
+- All new control behavior must enter through the User Intent layer first, then flow into torque mapping.
 
 ---
 ## Hardware
@@ -106,7 +190,8 @@ To explore the controller without a Matlab/Simulink installation click on the li
 ## Example Variants
 
 - **VARIANT_ADC**: The motors are controlled by two potentiometers connected to the Left sensor cable (long wired)
-- **VARIANT_USART**: The motors are controlled via serial protocol (e.g. on USART3 right sensor cable, the short wired cable). The commands can be sent from an Arduino. Check out the [hoverserial.ino](/Arduino/hoverserial) as an example sketch.
+- **VARIANT_USART**: The motors are controlled via serial protocol on the LEFT sensor cable (USART2, long wired). The commands can be sent from an Arduino or a Linux host. Check out the [hoverserial.ino](/Arduino/hoverserial) as an example sketch, or use the [Linux test script](/tools/scripts/uart_control_test.py). See also [USART2 control+feedback setup](#usart2-controlbinary-and-feedback-on-the-left-sensor-cable) below.
+- Need a quick UART reference? See [Serial communication cheat sheet](/docs/serial_communication_cheatsheet.md) or the full [UART Architecture document](/docs/uart_architecture.md).
 - **VARIANT_NUNCHUK**: Wii Nunchuk offers one hand control for throttle, braking and steering. This was one of the first input device used for electric armchairs or bottle crates.
 - **VARIANT_PPM**: RC remote control with PPM Sum signal.
 - **VARIANT_PWM**: RC remote control with PWM signal.
@@ -117,6 +202,198 @@ To explore the controller without a Matlab/Simulink installation click on the li
 - **VARIANT_SKATEBOARD**: This is for skateboard build, controlled using an RC remote with PWM signal connected to the right sensor cable.
 
 Of course the firmware can be further customized for other needs or projects.
+
+
+---
+## USART2 Control (binary) and Feedback on the Left Sensor Cable
+
+### Switching from debug ASCII output to binary control+feedback
+
+If you previously read ASCII debug output from the left sensor cable (USART2) with
+`DEBUG_SERIAL_USART2`, you can switch to bidirectional binary serial control by flashing
+**VARIANT_USART** instead.  The two modes cannot be active simultaneously on the same
+interface because debug output is plain text while feedback is binary framing.
+
+#### Config change (in `Inc/config.h`, automatically applied by VARIANT_USART)
+
+```c
+// These defines are already active in VARIANT_USART – shown here for reference:
+#define CONTROL_SERIAL_USART2  0   // receive SerialCommand frames on LEFT cable
+#define FEEDBACK_SERIAL_USART2     // transmit SerialFeedback frames on LEFT cable
+// #define DEBUG_SERIAL_USART2    // MUST be disabled – conflicts with FEEDBACK_SERIAL_USART2
+```
+
+Build and flash with:
+```bash
+pio run -e VARIANT_USART --target upload
+```
+
+#### Wire-up (LEFT sensor cable – **3.3 V logic only, NOT 5 V tolerant!**)
+
+| Cable pin | USB-UART adapter |
+|-----------|-----------------|
+| GND       | GND             |
+| TX2 (board transmits feedback) | RX (adapter receives) |
+| RX2 (board receives commands)  | TX (adapter transmits) |
+
+> ⚠️ Do **not** connect the red 15 V wire.
+
+#### Binary frame formats (little-endian, 115200 8N1)
+
+**SerialCommand** (host → board, 8 bytes):
+
+| Offset | Type   | Field    | Description                          |
+|--------|--------|----------|--------------------------------------|
+| 0      | uint16 | start    | `0xABCD`                             |
+| 2      | int16  | steer    | Steering command `[-1000, 1000]`     |
+| 4      | int16  | speed    | Speed    command `[-1000, 1000]`     |
+| 6      | uint16 | checksum | `start ^ steer ^ speed` (XOR)        |
+
+**SerialFeedback** (board → host, 18 bytes, sent every ~10 ms):
+
+| Offset | Type   | Field       | Description                              |
+|--------|--------|-------------|------------------------------------------|
+| 0      | uint16 | start       | `0xABCD`                                 |
+| 2      | int16  | cmd1        | Echoed steer command                     |
+| 4      | int16  | cmd2        | Echoed speed command                     |
+| 6      | int16  | speedR_meas | Right motor speed                        |
+| 8      | int16  | speedL_meas | Left  motor speed                        |
+| 10     | int16  | batVoltage  | Battery voltage × 100 (e.g. 4200 = 42 V)|
+| 12     | int16  | boardTemp   | Board temperature [°C]                   |
+| 14     | uint16 | cmdLed      | LED command flags                        |
+| 16     | uint16 | checksum    | XOR of all preceding fields              |
+
+#### Linux host test script
+
+[`tools/scripts/uart_control_test.py`](/tools/scripts/uart_control_test.py) opens the
+serial port, sends `SerialCommand` frames with a gentle speed ramp, and concurrently
+decodes and prints the `SerialFeedback` frames received from the board.
+
+```bash
+# Install dependency (once)
+pip install pyserial
+
+# Bench test – sends steer=0 speed=0 (safe, no motor movement)
+python3 tools/scripts/uart_control_test.py --port /dev/ttyUSB0
+
+# Command speed=150, steer=0 after a gentle ramp
+python3 tools/scripts/uart_control_test.py --port /dev/ttyUSB0 --speed 150
+
+# Use a different serial port or steer value
+python3 tools/scripts/uart_control_test.py --port /dev/ttyACM0 --speed 100 --steer 20
+```
+
+Example output:
+```
+Opening /dev/ttyUSB0 at 115200 baud (8N1)…
+Connected. Starting with speed=0, steer=0.
+Ramping toward speed=150, steer=0.
+Press Ctrl+C to stop safely.
+
+[TX] steer=    0  speed=    0
+[FB] cmd1=    0  cmd2=    0  speedR=    0  speedL=    0  bat=42.00V  temp=28°C  led=0x0000
+[TX] steer=    0  speed=   10
+[FB] cmd1=    0  cmd2=   10  speedR=   12  speedL=   11  bat=41.98V  temp=28°C  led=0x0000
+…
+```
+
+Press **Ctrl+C** to stop – the script sends `speed=0` before closing the port.
+
+
+
+---
+## UART Torque-Direct Mode (`CONTROL_SERIAL_TORQUE_DIRECT`)
+
+### Overview
+
+This optional compile-time mode provides a **simplified, PI-free control path** for
+UART input.  Instead of running the outer velocity PI controller, the `speed` field
+of every received `SerialCommand` frame is applied *directly* as a torque command to
+both wheels.
+
+| Property | Value |
+|---|---|
+| Config flag | `CONTROL_SERIAL_TORQUE_DIRECT` |
+| Defined in | `Inc/config.h`, inside `#ifdef VARIANT_USART` |
+| Input range | `speed` field –1000 … 1000 (normalized torque) |
+| Steer field | Ignored (treated as 0) |
+| FOC mode | Automatically forced to `TRQ_MODE` (FOC current/torque loop closed) |
+| Per-motor inversion | Respected (`INVERT_L_DIRECTION` / `INVERT_R_DIRECTION`) |
+| Safety features | All preserved: stall decay, stall supervisor, enable gating, timeout |
+| Feedback | `SerialFeedback` frames continue to be sent unchanged |
+
+**Sign convention:** positive `speed` value → forward torque on both wheels (same
+as the existing velocity-control mode).
+
+### How the control path works
+
+```
+UART frame → parse SerialCommand.speed field
+           → CLAMP to [-1000, 1000]
+           → cmdL = cmdR = torque_cmd
+           → DriveControl_MapCommandsToPwm (applies INVERT_x_DIRECTION)
+           → BLDC FOC controller in TRQ_MODE
+               ↳ Hall sensors used for rotor position estimate
+               ↳ Phase current measurement closes the current/torque loop
+               ↳ Smooth, quiet motor response proportional to the command
+```
+
+The BLDC FOC controller **always** reads Hall sensors to estimate rotor position —
+that is how FOC works.  What changes in `TRQ_MODE` is that the controller regulates
+*phase current* (proportional to torque) instead of *voltage*.  This eliminates the
+cogging and Hall-transition noise that is audible in voltage mode.  A constant torque
+command therefore produces smooth, continuous acceleration up to terminal velocity.
+
+### When to use it
+
+- You want **direct torque response** without any PI wind-up, overshoot or
+  oscillation.
+- You are implementing your own outer control loop on the host side and only need
+  the board to act as a torque actuator.
+
+### How to enable
+
+1. Open `Inc/config.h` and locate the `VARIANT_USART` section.
+2. Uncomment the line:
+   ```c
+   #define CONTROL_SERIAL_TORQUE_DIRECT    // [-] Bypass velocity PI; map UART speed field directly to per-wheel torque
+   ```
+3. Rebuild and flash.  `CTRL_MOD_REQ` is automatically set to `TRQ_MODE` — no
+   other config change is required.
+
+### Host-side test script
+
+[`tools/scripts/uart_control_test.py`](/tools/scripts/uart_control_test.py)
+supports torque mode via the `--mode torque` flag:
+
+```bash
+# Install dependency (once)
+pip install pyserial
+
+# Bench test in torque mode – sends torque=0 (safe, no movement)
+python3 tools/scripts/uart_control_test.py --port /dev/ttyUSB0 --mode torque
+
+# Apply torque=200 after a gentle ramp (steer is forced to 0)
+python3 tools/scripts/uart_control_test.py --port /dev/ttyUSB0 --mode torque --speed 200
+```
+
+Example output:
+```
+Opening /dev/ttyUSB0 at 115200 baud (8N1)…
+Mode: TORQUE DIRECT (steer=0, speed field used as torque command).
+Firmware must have CONTROL_SERIAL_TORQUE_DIRECT defined.
+Ramping toward torque=200.
+Press Ctrl+C to stop safely.
+
+[TX] mode=torque  steer=    0  torque=    0
+[FB] cmd1=    0  cmd2=    0  speedR=    0  speedL=    0  bat=42.00V  temp=28°C  led=0x0000
+[TX] mode=torque  steer=    0  torque=   10
+[FB] cmd1=    0  cmd2=   10  speedR=    3  speedL=    4  bat=41.98V  temp=28°C  led=0x0000
+…
+```
+
+Press **Ctrl+C** to stop – the script sends `torque=0` before closing the port.
+
 
 
 ---
