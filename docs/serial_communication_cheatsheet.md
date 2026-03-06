@@ -17,6 +17,36 @@ In `Inc/config.h`, each UART can be used for different roles, but some combinati
 - `DEBUG_SERIAL_USART2/3` → text debug output (`printf`) and optional text command parser.
 - `DEBUG_SERIAL_PROTOCOL` (requires DEBUG_SERIAL_USARTx) → CLI-style `$GET/$SET/...` command parser.
 
+### Mutual exclusion rules
+
+Each USART pin-pair (TX/RX) can serve **only one** role at a time:
+
+| Mode | Can coexist on same USART? |
+|------|---------------------------|
+| `CONTROL_SERIAL_USARTx` + `FEEDBACK_SERIAL_USARTx` | ✅ Yes – control (RX) and feedback (TX) share the port |
+| `DEBUG_SERIAL_USARTx` + `CONTROL_SERIAL_USARTx` | ❌ No – both compete for the same RX path |
+| `DEBUG_SERIAL_USARTx` + `FEEDBACK_SERIAL_USARTx` | ❌ No – both write to the same TX path |
+| `SIDEBOARD_SERIAL_USARTx` + `CONTROL_SERIAL_USARTx` | ❌ No – incompatible frame formats |
+
+### How to switch from DEBUG to CONTROL on USART3 (recommended)
+
+1. Open `Inc/config.h` and locate `VARIANT_USART` (or whichever variant you use).
+2. Comment out (or remove) `DEBUG_SERIAL_USART3`.
+3. Uncomment both of these:
+   ```c
+   #define CONTROL_SERIAL_USART3  0   // enables binary RX command frames
+   #define FEEDBACK_SERIAL_USART3     // enables binary TX telemetry frames
+   ```
+4. Optionally enable ACK replies (see §10 below):
+   ```c
+   // In the UART SETTINGS block, already present as a comment:
+   #define CONTROL_SERIAL_ACK
+   ```
+5. Rebuild and flash.
+
+After flashing you will **no longer see `printf` debug text** on USART3; instead the board
+accepts binary `SerialCommand` frames (RX) and emits binary `SerialFeedback` frames (TX).
+
 ## 3) Binary control frame (host -> board)
 
 When `CONTROL_SERIAL_USARTx` is enabled (non-iBUS):
@@ -33,6 +63,30 @@ typedef struct{
 - Start word: `0xABCD`.
 - Checksum must match or frame is ignored.
 - This is the same layout used by `Arduino/hoverserial/hoverserial.ino`.
+
+### RX data path (informational)
+
+```
+Host TX
+  │  (8 bytes, binary SerialCommand)
+  ▼
+USART3 RX pin  ──► DMA circular buffer (rx_buffer_R, 64 bytes)
+                        │
+               USART IDLE-line ISR
+                        │
+               usart3_rx_check()   ← called from stm32f1xx_it.c USART3_IRQHandler
+                        │  detects complete frame by exact byte-count match
+               usart_process_command()
+                        │  validates start word + XOR checksum
+                        ▼
+               commandR  (accepted command, module-static)
+                        │
+               readCommand()  ← called from main loop every 5 ms
+                        │
+               readInputRaw() → calcInputCmd() → mixerFcn()
+                        │
+               cmdL / cmdR  → FOC motor controllers
+```
 
 ## 4) Binary feedback frame (board -> host)
 
@@ -113,3 +167,78 @@ Parser notes:
 3. Verify electrical level compatibility (especially USART2).
 4. For binary mode, verify start frame `0xABCD` and checksum.
 5. For debug protocol, verify each command starts with `$` and ends with newline.
+
+## 10) Optional ACK mechanism (`CONTROL_SERIAL_ACK`)
+
+When `CONTROL_SERIAL_ACK` is defined (in the UART SETTINGS block of `Inc/config.h`), the
+firmware replies with a lightweight **SerialAck** frame immediately after accepting each valid
+`SerialCommand` frame.
+
+### SerialAck frame (board -> host, 10 bytes)
+
+```c
+#define SERIAL_ACK_FRAME  0xCDAB   // distinct start word, never confused with SerialFeedback
+
+typedef struct{
+  uint16_t start;     // SERIAL_ACK_FRAME = 0xCDAB
+  uint16_t seq;       // rolling 16-bit counter (wraps 0..65535); detects dropped ACKs
+  int16_t  steer;     // echo of last accepted steer value
+  int16_t  speed;     // echo of last accepted speed value
+  uint16_t checksum;  // start ^ seq ^ (uint16_t)steer ^ (uint16_t)speed
+} SerialAck;
+```
+
+### Design notes
+
+- ACK is sent via **blocking `HAL_UART_Transmit`** with a 5 ms timeout from within the
+  USART IDLE-line ISR (same context as `usart_process_command`).
+  At 115200 baud, 10 bytes takes ≈ 0.9 ms – well within the 5 ms budget.
+- ACK does **not** affect `SerialFeedback` frames; those continue to be sent by the main loop
+  via DMA, independently.
+- If the host is half-duplex (shared TX/RX line), it must stop transmitting for the ≈ 0.9 ms
+  after sending a command to allow the ACK to arrive.
+- Missed ACKs are safe – the `seq` counter lets the host detect gaps without blocking.
+- Do **not** enable `CONTROL_SERIAL_ACK` together with `CONTROL_IBUS`; iBUS has its own
+  protocol and does not use `SerialCommand` frames.
+
+### Enabling ACK
+
+In `Inc/config.h`, inside the `// ########################### UART SETTINGS ############################`
+block, change:
+
+```c
+// #define CONTROL_SERIAL_ACK
+```
+to:
+```c
+#define CONTROL_SERIAL_ACK
+```
+
+## 11) Host-side Python example
+
+See `examples/python_serial/hoverserial.py` for a complete pyserial example that:
+- Sends `SerialCommand` frames.
+- Reads and validates `SerialFeedback` frames.
+- Optionally reads and validates `SerialAck` frames when `CONTROL_SERIAL_ACK` is enabled.
+
+### Quick bench-test procedure (wheels off ground)
+
+1. Flash firmware compiled with `CONTROL_SERIAL_USART3`, `FEEDBACK_SERIAL_USART3`, and
+   optionally `CONTROL_SERIAL_ACK`.
+2. Connect a USB-to-3.3V/5V UART adapter to the right (short) sensor cable:
+   - GND ↔ GND, TX(adapter) ↔ RX(board), RX(adapter) ↔ TX(board).
+   - USART3 is 5V tolerant, so a 5V adapter is fine.
+3. Install pyserial: `pip install pyserial`.
+4. Run the example:
+   ```bash
+   python examples/python_serial/hoverserial.py --port /dev/ttyUSB0
+   ```
+5. Expected output (with ACK enabled):
+   ```
+   Sent: steer=0 speed=50
+   ACK  seq=1  steer=0  speed=50   ✓
+   FB   cmd1=0 cmd2=50  speedR=45  speedL=45  bat=3980  temp=28  led=0
+   ```
+6. Gradually increase `speed` (e.g., up to 300) while the board is on a stand.
+   Verify `speedR_meas` and `speedL_meas` in feedback rise proportionally.
+7. Send `speed=0` to stop. Confirm both speeds return to 0.

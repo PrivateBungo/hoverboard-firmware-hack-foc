@@ -266,13 +266,18 @@
 
 // ############################ VARIANT_USART SETTINGS ############################
 #ifdef VARIANT_USART
+  // --- USART2 (left cable, NOT 5V tolerant) ---
   // #define SIDEBOARD_SERIAL_USART2 0
   #define CONTROL_SERIAL_USART2  0    // left sensor board cable, disable if ADC or PPM is used! For Arduino control check the hoverSerial.ino
   #define FEEDBACK_SERIAL_USART2      // left sensor board cable, disable if ADC or PPM is used!
 
-  // #define SIDEBOARD_SERIAL_USART3 0
+  // --- USART3 (right cable, 5V tolerant) – RECOMMENDED for Raspberry Pi / host control ---
+  // To switch from DEBUG output to binary CONTROL+FEEDBACK on USART3, comment-out
+  // DEBUG_SERIAL_USART3 (and any other DEBUG/SIDEBOARD uses of USART3) and uncomment:
   // #define CONTROL_SERIAL_USART3  0    // right sensor board cable. Number indicates priority for dual-input. Disable if I2C (nunchuk or lcd) is used! For Arduino control check the hoverSerial.ino
   // #define FEEDBACK_SERIAL_USART3      // right sensor board cable, disable if I2C (nunchuk or lcd) is used!
+  // NOTE: DEBUG_SERIAL_USART3 and CONTROL_SERIAL_USART3 are mutually exclusive on the same port.
+  //       Only ONE role (DEBUG -OR- CONTROL) may be assigned to each USART at a time.
  
   // #define DUAL_INPUTS                 //  UART*(Primary) + SIDEBOARD(Auxiliary). Uncomment this to use Dual-inputs
   #define PRI_INPUT1             3, -1000, 0, 1000, 0     // TYPE, MIN, MID, MAX, DEADBAND. See INPUT FORMAT section
@@ -588,13 +593,19 @@
 
 
 
-// ########################### UART SETIINGS ############################
+// ########################### UART SETTINGS ############################
 #if defined(FEEDBACK_SERIAL_USART2) || defined(CONTROL_SERIAL_USART2) || defined(DEBUG_SERIAL_USART2) || defined(SIDEBOARD_SERIAL_USART2) || \
     defined(FEEDBACK_SERIAL_USART3) || defined(CONTROL_SERIAL_USART3) || defined(DEBUG_SERIAL_USART3) || defined(SIDEBOARD_SERIAL_USART3)
   #define SERIAL_START_FRAME      0xABCD                  // [-] Start frame definition for serial commands
   #define SERIAL_BUFFER_SIZE      64                      // [bytes] Size of Serial Rx buffer. Make sure it is always larger than the structure size
   #define SERIAL_TIMEOUT          160                     // [-] Serial timeout duration for the received data. 160 ~= 0.8 sec. Calculation: 0.8 sec / 0.005 sec
 #endif
+// Optional lightweight ACK: when defined, the firmware replies with a small SerialAck frame
+// on the same UART TX immediately after a valid SerialCommand frame is accepted.
+// This lets a host (e.g., Raspberry Pi) confirm the board parsed and accepted the command.
+// Safe with half-duplex setups because the ACK is tiny (~10 bytes, <1 ms at 115200).
+// Do NOT enable together with CONTROL_IBUS (iBUS has its own framing).
+// #define CONTROL_SERIAL_ACK                            // Uncomment to enable ACK replies
 #if defined(FEEDBACK_SERIAL_USART2) || defined(CONTROL_SERIAL_USART2) || defined(DEBUG_SERIAL_USART2) || defined(SIDEBOARD_SERIAL_USART2)
   #ifndef USART2_BAUD
     #define USART2_BAUD           115200                  // UART2 baud rate (long wired cable)
@@ -607,7 +618,7 @@
   #endif
   #define USART3_WORDLENGTH       UART_WORDLENGTH_8B      // UART_WORDLENGTH_8B or UART_WORDLENGTH_9B
 #endif
-// ########################### UART SETIINGS ############################
+// ########################### UART SETTINGS ############################
 
 
 
