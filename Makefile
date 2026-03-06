@@ -13,6 +13,7 @@ OPT = -Og
 
 # Build path
 BUILD_DIR = build
+DEPDIR = .dep
 
 ######################################
 # source
@@ -40,6 +41,7 @@ Src/setup.c \
 Src/control.c \
 Src/comms.c \
 Src/util.c \
+Src/drive_control.c \
 Src/main.c \
 Src/bldc.c \
 Src/eeprom.c \
@@ -47,7 +49,19 @@ Src/hd44780.c \
 Src/pcf8574.c \
 Src/stm32f1xx_it.c \
 Src/BLDC_controller_data.c \
-Src/BLDC_controller.c
+Src/BLDC_controller.c \
+core/supervisor/input_supervisor.c \
+core/supervisor/mode_supervisor.c \
+core/supervisor/stall_supervisor.c \
+core/supervisor/wheel_command_supervisor.c \
+core/io/uart_reporting.c \
+core/io/input_decode.c \
+core/control/foc_adapter.c \
+core/control/user_intent.c \
+core/control/command_filter.c \
+core/control/intent_state_machine.c \
+core/control/velocity_setpoint_layer.c \
+core/control/motor_controller.c
 
 # ASM sources
 ASM_SOURCES =  \
@@ -100,7 +114,10 @@ C_INCLUDES =  \
 -IDrivers/STM32F1xx_HAL_Driver/Inc \
 -IDrivers/STM32F1xx_HAL_Driver/Inc/Legacy \
 -IDrivers/CMSIS/Device/ST/STM32F1xx/Include \
--IDrivers/CMSIS/Include
+-IDrivers/CMSIS/Include \
+-Icore/supervisor \
+-Icore/io \
+-Icore/control
 
 
 # compile gcc flags
@@ -113,7 +130,7 @@ CFLAGS += -g -gdwarf-2
 endif
 
 # Generate dependency information
-CFLAGS += -MMD -MP -MF"$(@:%.o=%.d)" -MT"$(@:%.o=%.d)"
+CFLAGS += -MMD -MP -MF"$(DEPDIR)/$(@F:.o=.d)" -MT"$@"
 
 # Choose variant from env var
 # make -e VARIANT=VARIANT_ADC
@@ -137,6 +154,8 @@ LDFLAGS = $(MCU) -specs=nano.specs -T$(LDSCRIPT) $(LIBDIR) $(LIBS) -Wl,-Map=$(BU
 # default action: build all
 all: $(BUILD_DIR)/$(TARGET).elf $(BUILD_DIR)/$(TARGET).hex $(BUILD_DIR)/$(TARGET).bin
 
+.PHONY: all format clean flash unlock prune-build artifacts
+
 
 #######################################
 # build the application
@@ -148,10 +167,10 @@ vpath %.c $(sort $(dir $(C_SOURCES)))
 OBJECTS += $(addprefix $(BUILD_DIR)/,$(notdir $(ASM_SOURCES:.s=.o)))
 vpath %.s $(sort $(dir $(ASM_SOURCES)))
 
-$(BUILD_DIR)/%.o: %.c Inc/config.h Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/%.o: %.c Inc/config.h Makefile | $(BUILD_DIR) $(DEPDIR)
 	$(CC) -c $(CFLAGS) -Wa,-a,-ad,-alms=$(BUILD_DIR)/$(notdir $(<:.c=.lst)) $< -o $@
 
-$(BUILD_DIR)/%.o: %.s Inc/config.h Makefile | $(BUILD_DIR)
+$(BUILD_DIR)/%.o: %.s Inc/config.h Makefile | $(BUILD_DIR) $(DEPDIR)
 	$(AS) -c $(CFLAGS) $< -o $@
 
 $(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) Makefile
@@ -167,13 +186,23 @@ $(BUILD_DIR)/%.bin: $(BUILD_DIR)/%.elf | $(BUILD_DIR)
 $(BUILD_DIR):
 	mkdir -p $@
 
+$(DEPDIR):
+	mkdir -p $@
+
 format:
 	find Src/ Inc/ -iname '*.h' -o -iname '*.c' | xargs clang-format -i
 #######################################
 # clean up
 #######################################
 clean:
-	-rm -fR .dep $(BUILD_DIR)
+	-rm -fR $(DEPDIR) $(BUILD_DIR)
+
+# Remove intermediate build products and keep only final artifacts (elf/hex/bin/map)
+prune-build:
+	-rm -f $(BUILD_DIR)/*.o $(BUILD_DIR)/*.d $(BUILD_DIR)/*.lst
+
+# Build and then keep only final artifacts in build/
+artifacts: all prune-build
 
 flash:
 	st-flash --reset write $(BUILD_DIR)/$(TARGET).bin 0x8000000
@@ -184,6 +213,6 @@ unlock:
 #######################################
 # dependencies
 #######################################
--include $(shell mkdir .dep 2>/dev/null) $(wildcard .dep/*)
+-include $(wildcard $(DEPDIR)/*.d)
 
 # *** EOF ***
