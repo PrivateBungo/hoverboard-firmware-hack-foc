@@ -236,8 +236,27 @@ void BLDC_Init(void) {
   rtP_Left.z_ctrlTypSel         = CTRL_TYP_SEL;
   rtP_Left.b_diagEna            = DIAG_ENA;
   rtP_Left.i_max                = (I_MOT_MAX * A2BIT_CONV) << 4;        // fixdt(1,16,4)
-  rtP_Left.n_max                = N_MOT_MAX << 4;                       // fixdt(1,16,4)
-  rtP_Left.n_stdStillDet        = MOTOR_CTRL_STANDSTILL_GATE_RPM << 4;  // fixdt(1,16,4)
+  rtP_Left.n_max                = N_MOT_MAX << 4;                         // fixdt(1,16,4)
+  rtP_Left.n_stdStillDet        = MOTOR_CTRL_STANDSTILL_GATE_RPM << 4;    // fixdt(1,16,4)
+
+  // Keep sinusoidal FOC active at all speeds.  The default firmware switches to
+  // coarse 6-step block commutation below 30 rpm (n_commDeacvHi=480), which
+  // produces dead-zone cogging that blocks the motor at startup.  Setting both
+  // thresholds to 0 means |speed|>=0 is always true → relay stays permanently ON.
+  // NOTE: confusing naming convention in the Simulink model:
+  //   n_commDeacvHi = "commutation DEactivation HIGH threshold" → relay turns ON  (FOC activates)   when |speed| >= n_commDeacvHi
+  //   n_commAcvLo   = "commutation ACTivation   LOW  threshold" → relay turns OFF (FOC deactivates) when |speed| <= n_commAcvLo
+  rtP_Left.n_commDeacvHi        = MOTOR_CTRL_FOC_COMM_ACT_RPM << 4;       // fixdt(1,16,4): FOC activates   when |speed| >= this (was 480 = 30 rpm)
+  rtP_Left.n_commAcvLo          = MOTOR_CTRL_FOC_COMM_DEACT_RPM << 4;     // fixdt(1,16,4): FOC deactivates when |speed| <= this (was 240 = 15 rpm)
+
+  // Disable the startup jerk-detector (dz_cntTrnsDet).  Its default threshold
+  // (dz_cntTrnsDetHi=40 counts) fires on the very first hall transition from
+  // standstill: the hall-period counter jumps from z_maxCntRst (~2000) down to
+  // ~1, giving |ΔT|≈1999 >> 40 → dz_cntTrnsDet=true → FOC disabled again.
+  // Setting Hi = z_maxCntRst+1 makes the threshold unreachable (max |ΔT|=1999).
+  rtP_Left.dz_cntTrnsDetHi      = (int16_T)(rtP_Left.z_maxCntRst + 1);    // was 40;  now permanently OFF
+  rtP_Left.dz_cntTrnsDetLo      = (int16_T)(rtP_Left.z_maxCntRst);        // was 20;  always resets if somehow triggered
+
   rtP_Left.b_fieldWeakEna       = FIELD_WEAK_ENA; 
   rtP_Left.id_fieldWeakMax      = (FIELD_WEAK_MAX * A2BIT_CONV) << 4;   // fixdt(1,16,4)
   rtP_Left.a_phaAdvMax          = PHASE_ADV_MAX << 4;                   // fixdt(1,16,4)

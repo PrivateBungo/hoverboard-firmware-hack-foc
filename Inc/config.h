@@ -156,6 +156,15 @@
 #define I_DC_MAX        15              // [A] Maximum stage2 DC Link current limit for Commutation and Sinusoidal types (This is the final current protection. Above this value, current chopping is applied. To avoid this make sure that I_DC_MAX = I_MOT_MAX + 2A)
 #define N_MOT_MAX       550             // [rpm] Maximum motor speed limit
 #define MOTOR_CTRL_STANDSTILL_GATE_RPM  10  // [rpm] Speed threshold below which the standstill protection gates the motor (prevents Hall-quantization-induced torque bursts at near-standstill)
+// FOC startup: the controller normally switches to 6-step block commutation below
+// n_commDeacvHi (default 30 rpm) and only re-enables sinusoidal FOC above that
+// threshold, causing cogging and a "blocked" feel at low speeds.  Setting both
+// thresholds to 0 keeps the FOC relay permanently ON so sinusoidal FOC is used
+// from the very first PWM cycle.  The jerk-detector (dz_cntTrnsDet) is also
+// disabled in BLDC_Init() because its default threshold (40 counts) fires on the
+// first hall transition from standstill and would revert to block commutation.
+#define MOTOR_CTRL_FOC_COMM_ACT_RPM     0   // [rpm] Speed above which FOC/SIN method activates (relay ON; default firmware: 30 rpm)
+#define MOTOR_CTRL_FOC_COMM_DEACT_RPM   0   // [rpm] Speed below which FOC/SIN method deactivates (relay OFF; default firmware: 15 rpm)
 
 // Field Weakening / Phase Advance
 #define FIELD_WEAK_ENA  0               // [-] Field Weakening / Phase Advance enable flag: 0 = Disabled (default), 1 = Enabled
