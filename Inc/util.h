@@ -42,6 +42,19 @@
       uint16_t  checksum;
     } SerialCommand;
   #endif
+
+  // Optional ACK frame sent back to host on every successfully validated SerialCommand.
+  // Enable with: #define CONTROL_SERIAL_ACK  in config.h (UART settings section).
+  #ifdef CONTROL_SERIAL_ACK
+    #define SERIAL_ACK_FRAME  0xCDAB                // Distinct start word for ACK frames
+    typedef struct{
+      uint16_t  start;      // SERIAL_ACK_FRAME
+      uint16_t  seq;        // Rolling 16-bit sequence counter
+      int16_t   steer;      // Echo of last accepted steer value
+      int16_t   speed;      // Echo of last accepted speed value
+      uint16_t  checksum;   // start ^ seq ^ (uint16_t)steer ^ (uint16_t)speed
+    } SerialAck;
+  #endif
 #endif
 #if defined(SIDEBOARD_SERIAL_USART2) || defined(SIDEBOARD_SERIAL_USART3)
     typedef struct{
@@ -127,5 +140,8 @@ typedef struct {
 } MultipleTap;
 void multipleTapDet(int16_t u, uint32_t timeNow, MultipleTap *x);
 
-#endif
+// Effective (gated) motor error state used by top-level safety logic.
+extern uint8_t g_errCodeLeftEffective;
+extern uint8_t g_errCodeRightEffective;
 
+#endif

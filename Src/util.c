@@ -914,14 +914,14 @@ void readInputRaw(void) {
 
     #if defined(CONTROL_PWM_LEFT)
     if (inIdx == CONTROL_PWM_LEFT) {
-      input1[inIdx].raw = (pwm_captured_ch1_value - 500) * 2;
-      input2[inIdx].raw = (pwm_captured_ch2_value - 500) * 2;
+      input1[inIdx].raw = CLAMP(((int16_t)pwm_captured_ch1_value - 500) * 2, INPUT_MIN, INPUT_MAX);
+      input2[inIdx].raw = CLAMP(((int16_t)pwm_captured_ch2_value - 500) * 2, INPUT_MIN, INPUT_MAX);
     }
     #endif
     #if defined(CONTROL_PWM_RIGHT)
     if (inIdx == CONTROL_PWM_RIGHT) {
-      input1[inIdx].raw = (pwm_captured_ch1_value - 500) * 2;
-      input2[inIdx].raw = (pwm_captured_ch2_value - 500) * 2;
+      input1[inIdx].raw = CLAMP(((int16_t)pwm_captured_ch1_value - 500) * 2, INPUT_MIN, INPUT_MAX);
+      input2[inIdx].raw = CLAMP(((int16_t)pwm_captured_ch2_value - 500) * 2, INPUT_MIN, INPUT_MAX);
     }
     #endif
 
@@ -1264,6 +1264,7 @@ void usart_process_debug(uint8_t *userCommand, uint32_t len)
 /*
  * Process command Rx data
  * - if the command_in data is valid (correct START_FRAME and checksum) copy the command_in to command_out
+ * - when CONTROL_SERIAL_ACK is defined, send a small SerialAck frame back on the same UART TX
  */
 #if defined(CONTROL_SERIAL_USART2) || defined(CONTROL_SERIAL_USART3)
 void usart_process_command(SerialCommand *command_in, SerialCommand *command_out, uint8_t usart_idx)
@@ -1307,6 +1308,24 @@ void usart_process_command(SerialCommand *command_in, SerialCommand *command_out
         timeoutCntSerial_R = 0;         // Reset timeout counter
         #endif
       }
+
+      // Send lightweight ACK back to host if enabled
+      #ifdef CONTROL_SERIAL_ACK
+      {
+        static uint16_t ack_seq = 0;
+        SerialAck ack;
+        ack.start    = (uint16_t)SERIAL_ACK_FRAME;
+        ack.seq      = ack_seq++;
+        ack.steer    = command_in->steer;
+        ack.speed    = command_in->speed;
+        ack.checksum = (uint16_t)(ack.start ^ ack.seq ^ (uint16_t)ack.steer ^ (uint16_t)ack.speed);
+        if (usart_idx == 2) {
+          HAL_UART_Transmit(&huart2, (uint8_t *)&ack, sizeof(ack), 5);
+        } else if (usart_idx == 3) {
+          HAL_UART_Transmit(&huart3, (uint8_t *)&ack, sizeof(ack), 5);
+        }
+      }
+      #endif // CONTROL_SERIAL_ACK
     }
   }
   #endif
@@ -1405,7 +1424,7 @@ void sideboardLeds(uint8_t *leds) {
     // Error handling
     // Critical error:  LED1 on (RED)     + high pitch beep (hadled in main)
     // Soft error:      LED3 on (YELLOW)  + low  pitch beep (hadled in main)
-    if (rtY_Left.z_errCode || rtY_Right.z_errCode) {
+    if (g_errCodeLeftEffective || g_errCodeRightEffective) {
       *leds |= LED1_SET;
       *leds &= ~LED3_SET & ~LED2_SET;
     }
