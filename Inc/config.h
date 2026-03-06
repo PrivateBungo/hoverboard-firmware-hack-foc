@@ -202,6 +202,10 @@
 // #define DEBUG_SERIAL_USART2          // left sensor board cable, disable if ADC or PPM is used!
 // #define DEBUG_SERIAL_USART3          // right sensor board cable, disable if I2C (nunchuk or lcd) is used!
 // #define DEBUG_SERIAL_PROTOCOL        // uncomment this to send user commands to the board, change parameters and print specific signals (see comms.c for the user commands)
+// NOTE: DEBUG_SERIAL_USARTx outputs human-readable ASCII text. It CANNOT be combined with FEEDBACK_SERIAL_USARTx
+//       on the same interface. To switch from debug output to binary control+feedback on USART2, disable
+//       DEBUG_SERIAL_USART2 and enable CONTROL_SERIAL_USART2 + FEEDBACK_SERIAL_USART2 (see VARIANT_USART).
+//       Use tools/scripts/uart_control_test.py to send commands and decode the binary feedback frames.
 // ########################### END OF DEBUG SERIAL ############################
 
 
@@ -265,6 +269,12 @@
 
 
 // ############################ VARIANT_USART SETTINGS ############################
+// Binary serial control+feedback on the LEFT sensor cable (USART2, 115200 8N1).
+// • CONTROL_SERIAL_USART2 receives SerialCommand frames (start=0xABCD, steer, speed, checksum).
+// • FEEDBACK_SERIAL_USART2 transmits SerialFeedback frames every 10 ms (start=0xABCD, cmd1, cmd2,
+//   speedR_meas, speedL_meas, batVoltage, boardTemp, cmdLed, checksum).
+// DEBUG_SERIAL_USART2 is intentionally NOT defined here because it conflicts with FEEDBACK_SERIAL_USART2.
+// Use tools/scripts/uart_control_test.py on a Linux/Mac host to send commands and decode feedback.
 #ifdef VARIANT_USART
   // #define SIDEBOARD_SERIAL_USART2 0
   #define CONTROL_SERIAL_USART2  0    // left sensor board cable, disable if ADC or PPM is used! For Arduino control check the hoverSerial.ino

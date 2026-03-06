@@ -17,6 +17,7 @@ Table of Contents
 * [Hardware](#hardware)
 * [FOC Firmware](#foc-firmware)
 * [Example Variants](#example-variants)
+* [USART2 Control and Feedback on the Left Sensor Cable](#usart2-control-binary-and-feedback-on-the-left-sensor-cable)
 * [Projects and Links](#projects-and-links)
 * [Contributions](#contributions)
 
@@ -188,7 +189,7 @@ To explore the controller without a Matlab/Simulink installation click on the li
 ## Example Variants
 
 - **VARIANT_ADC**: The motors are controlled by two potentiometers connected to the Left sensor cable (long wired)
-- **VARIANT_USART**: The motors are controlled via serial protocol (e.g. on USART3 right sensor cable, the short wired cable). The commands can be sent from an Arduino. Check out the [hoverserial.ino](/Arduino/hoverserial) as an example sketch.
+- **VARIANT_USART**: The motors are controlled via serial protocol on the LEFT sensor cable (USART2, long wired). The commands can be sent from an Arduino or a Linux host. Check out the [hoverserial.ino](/Arduino/hoverserial) as an example sketch, or use the [Linux test script](/tools/scripts/uart_control_test.py). See also [USART2 control+feedback setup](#usart2-controlbinary-and-feedback-on-the-left-sensor-cable) below.
 - Need a quick UART reference? See [Serial communication cheat sheet](/docs/serial_communication_cheatsheet.md).
 - **VARIANT_NUNCHUK**: Wii Nunchuk offers one hand control for throttle, braking and steering. This was one of the first input device used for electric armchairs or bottle crates.
 - **VARIANT_PPM**: RC remote control with PPM Sum signal.
@@ -200,6 +201,103 @@ To explore the controller without a Matlab/Simulink installation click on the li
 - **VARIANT_SKATEBOARD**: This is for skateboard build, controlled using an RC remote with PWM signal connected to the right sensor cable.
 
 Of course the firmware can be further customized for other needs or projects.
+
+
+---
+## USART2 Control (binary) and Feedback on the Left Sensor Cable
+
+### Switching from debug ASCII output to binary control+feedback
+
+If you previously read ASCII debug output from the left sensor cable (USART2) with
+`DEBUG_SERIAL_USART2`, you can switch to bidirectional binary serial control by flashing
+**VARIANT_USART** instead.  The two modes cannot be active simultaneously on the same
+interface because debug output is plain text while feedback is binary framing.
+
+#### Config change (in `Inc/config.h`, automatically applied by VARIANT_USART)
+
+```c
+// These defines are already active in VARIANT_USART – shown here for reference:
+#define CONTROL_SERIAL_USART2  0   // receive SerialCommand frames on LEFT cable
+#define FEEDBACK_SERIAL_USART2     // transmit SerialFeedback frames on LEFT cable
+// #define DEBUG_SERIAL_USART2    // MUST be disabled – conflicts with FEEDBACK_SERIAL_USART2
+```
+
+Build and flash with:
+```bash
+pio run -e VARIANT_USART --target upload
+```
+
+#### Wire-up (LEFT sensor cable – **3.3 V logic only, NOT 5 V tolerant!**)
+
+| Cable pin | USB-UART adapter |
+|-----------|-----------------|
+| GND       | GND             |
+| TX2 (board transmits feedback) | RX (adapter receives) |
+| RX2 (board receives commands)  | TX (adapter transmits) |
+
+> ⚠️ Do **not** connect the red 15 V wire.
+
+#### Binary frame formats (little-endian, 115200 8N1)
+
+**SerialCommand** (host → board, 8 bytes):
+
+| Offset | Type   | Field    | Description                          |
+|--------|--------|----------|--------------------------------------|
+| 0      | uint16 | start    | `0xABCD`                             |
+| 2      | int16  | steer    | Steering command `[-1000, 1000]`     |
+| 4      | int16  | speed    | Speed    command `[-1000, 1000]`     |
+| 6      | uint16 | checksum | `start ^ steer ^ speed` (XOR)        |
+
+**SerialFeedback** (board → host, 18 bytes, sent every ~10 ms):
+
+| Offset | Type   | Field       | Description                              |
+|--------|--------|-------------|------------------------------------------|
+| 0      | uint16 | start       | `0xABCD`                                 |
+| 2      | int16  | cmd1        | Echoed steer command                     |
+| 4      | int16  | cmd2        | Echoed speed command                     |
+| 6      | int16  | speedR_meas | Right motor speed                        |
+| 8      | int16  | speedL_meas | Left  motor speed                        |
+| 10     | int16  | batVoltage  | Battery voltage × 100 (e.g. 4200 = 42 V)|
+| 12     | int16  | boardTemp   | Board temperature [°C]                   |
+| 14     | uint16 | cmdLed      | LED command flags                        |
+| 16     | uint16 | checksum    | XOR of all preceding fields              |
+
+#### Linux host test script
+
+[`tools/scripts/uart_control_test.py`](/tools/scripts/uart_control_test.py) opens the
+serial port, sends `SerialCommand` frames with a gentle speed ramp, and concurrently
+decodes and prints the `SerialFeedback` frames received from the board.
+
+```bash
+# Install dependency (once)
+pip install pyserial
+
+# Bench test – sends steer=0 speed=0 (safe, no motor movement)
+python3 tools/scripts/uart_control_test.py --port /dev/ttyUSB0
+
+# Command speed=150, steer=0 after a gentle ramp
+python3 tools/scripts/uart_control_test.py --port /dev/ttyUSB0 --speed 150
+
+# Use a different serial port or steer value
+python3 tools/scripts/uart_control_test.py --port /dev/ttyACM0 --speed 100 --steer 20
+```
+
+Example output:
+```
+Opening /dev/ttyUSB0 at 115200 baud (8N1)…
+Connected. Starting with speed=0, steer=0.
+Ramping toward speed=150, steer=0.
+Press Ctrl+C to stop safely.
+
+[TX] steer=    0  speed=    0
+[FB] cmd1=    0  cmd2=    0  speedR=    0  speedL=    0  bat=42.00V  temp=28°C  led=0x0000
+[TX] steer=    0  speed=   10
+[FB] cmd1=    0  cmd2=   10  speedR=   12  speedL=   11  bat=41.98V  temp=28°C  led=0x0000
+…
+```
+
+Press **Ctrl+C** to stop – the script sends `speed=0` before closing the port.
+
 
 
 ---
