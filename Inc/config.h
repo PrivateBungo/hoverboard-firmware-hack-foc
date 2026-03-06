@@ -212,7 +212,7 @@
 
 
 // ############################### BUZZER ENABLE / DISABLE ###############################
-#define BUZZER_ENABLED              // If enabled the buzzer will buzz, otherwise not.
+// #define BUZZER_ENABLED           // Uncomment to enable all beeps/buzzer sounds. Comment out to silence all sounds.
 // ########################### END OF BUZZER ENABLE / DISABLE ############################
 
 
