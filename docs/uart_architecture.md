@@ -157,8 +157,8 @@ typedef struct {
   uint16_t start;        // 0xABCD
   int16_t  cmd1;         // echoed steer command (input1[inIdx].cmd)
   int16_t  cmd2;         // echoed speed command (input2[inIdx].cmd)
-  int16_t  speedR_meas;  // right motor speed  [rpm-like units from FOC]
-  int16_t  speedL_meas;  // left  motor speed  [rpm-like units from FOC]
+  int16_t  speedR_meas;  // right motor speed [rpm-like units, vehicle-forward convention]
+  int16_t  speedL_meas;  // left  motor speed [rpm-like units, vehicle-forward convention]
   int16_t  batVoltage;   // battery voltage × 100  (e.g. 4200 = 42.00 V)
   int16_t  boardTemp;    // board temperature [°C]
   uint16_t cmdLed;       // LED command flags for sideboard LEDs
@@ -168,6 +168,34 @@ typedef struct {
 
 The checksum covers **all** preceding `uint16`-sized fields:
 `start ^ cmd1 ^ cmd2 ^ speedR_meas ^ speedL_meas ^ batVoltage ^ boardTemp ^ cmdLed`.
+
+#### Speed field sign convention
+
+`speedR_meas` and `speedL_meas` use **vehicle-forward sign convention**: positive
+values mean both wheels are turning in the forward direction.  The firmware applies
+the same sign corrections as `calcAvgSpeed()` and the PI controller before placing
+the values in the frame:
+
+| Build flag | Left motor (`speedL_meas`) | Right motor (`speedR_meas`) |
+|------------|---------------------------|------------------------------|
+| neither flag | `+n_mot_left` (positive fwd) | `−n_mot_right` (negated: positive fwd) |
+| `INVERT_L_DIRECTION` | `−n_mot_left` | `−n_mot_right` |
+| `INVERT_R_DIRECTION` | `+n_mot_left` | `+n_mot_right` |
+| both | `−n_mot_left` | `+n_mot_right` |
+| `SPEED_COEFFICIENT` negative | all of the above additionally negated |
+
+The "negative" check for `SPEED_COEFFICIENT` tests bit 15 of the Q14 fixdt value
+(`SPEED_COEFFICIENT & (1 << 15)`), which is the MSB of the 16-bit signed representation.
+All standard variants use positive values (e.g. 16384 = 1.0), so this path is
+inactive in normal use.
+
+This means **both speed fields are positive when the board moves forward** for the
+default wiring, matching the sign of the speed command in `cmd2`.
+
+> **Historical note**: before this correction, `speedR_meas` was the raw FOC
+> `n_mot_right` value, which is negative when going forward with the default wiring.
+> This made the feedback inconsistent with the setpoint and difficult to use for
+> host-side diagnostics.
 
 ### 5.3 `SerialSideboard` (sideboard → board)
 
@@ -207,9 +235,26 @@ CtrlMode:<x>
 ```
 SetpointTrace mode:<FWD|REV|ZL> rawLong:<x> longOff:<x> rawLongMinusOff:<x>
 uCmd:<x> cmdEff:<x> arm:<x> blk:<x> nz:<x> calibA:<x> calibL:<x> calibI:<x>
-vIntent:<x> vSet:<x> aSet:<x> vAct:<x> vErr:<x> vSat:<x> slip:<x>
-zLatchMs:<x> zRel:<x>
+vIntent:<x> vSet:<x> aSet:<x> vAct:<x> vMeasL:<x> vMeasR:<x> vErr:<x> vSat:<x>
+slip:<x> zLatchMs:<x> zRel:<x>
 ```
+
+Key PI-relevant fields:
+
+| Field | Description |
+|-------|-------------|
+| `vSet` | Active velocity setpoint [rpm] after slew-rate limiter |
+| `vAct` | Average measured speed [rpm] — vehicle-forward convention |
+| `vMeasL` | Left-wheel measured speed [rpm] — same sign as `vSet` |
+| `vMeasR` | Right-wheel measured speed [rpm] — same sign as `vSet` |
+| `vErr` | Average speed error (`vSet − vAct`) [rpm] |
+| `vSat` | `1` when PI output is saturated (torque at limit) |
+
+`vMeasL` and `vMeasR` use the same sign corrections as the PI controller
+(INVERT_L/R_DIRECTION and SPEED_COEFFICIENT), so positive values always mean
+vehicle-forward regardless of physical motor wiring.  Comparing `vSet` against
+`vMeasL` and `vMeasR` individually is the first step when diagnosing per-wheel
+PI instability.
 
 ### 6.3 Event-driven lines
 

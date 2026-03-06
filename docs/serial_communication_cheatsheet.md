@@ -43,8 +43,8 @@ typedef struct{
   uint16_t start;       // 0xABCD
   int16_t  cmd1;
   int16_t  cmd2;
-  int16_t  speedR_meas;
-  int16_t  speedL_meas;
+  int16_t  speedR_meas; // right motor speed, vehicle-forward convention (positive = fwd)
+  int16_t  speedL_meas; // left  motor speed, vehicle-forward convention (positive = fwd)
   int16_t  batVoltage;
   int16_t  boardTemp;
   uint16_t cmdLed;
@@ -53,6 +53,11 @@ typedef struct{
 ```
 
 - Sent periodically from main loop when feedback mode is enabled.
+- `speedR_meas` and `speedL_meas` are **sign-normalised to vehicle-forward
+  convention**: both are positive when the board moves forward, matching the
+  sign of the speed command in `cmd2`.  The firmware applies the same
+  `INVERT_L/R_DIRECTION` and `SPEED_COEFFICIENT` sign corrections that the PI
+  speed controller uses internally.
 - The Arduino example also contains parser code for this frame.
 
 ## 5) Text debug stream (board -> terminal)
@@ -65,6 +70,15 @@ Current periodic line includes:
 - `cmdL`, `cmdR`: mixed wheel commands (internal command domain, usually `-1000..1000`).
 - `ErrL`, `ErrR`: current `z_errCode` bytes for left/right controller.
 - battery and board temperature values.
+
+The `SetpointTrace` line (emitted every ~200 ms) includes PI diagnostics:
+
+- `vSet`: active velocity setpoint [rpm] after slew-rate limiter.
+- `vAct`: average measured speed [rpm] (vehicle-forward convention).
+- `vMeasL`: left-wheel measured speed [rpm] (vehicle-forward convention).
+- `vMeasR`: right-wheel measured speed [rpm] (vehicle-forward convention).
+- `vErr`: average speed error `vSet − vAct` [rpm].
+- `vSat`: `1` when the PI output is saturated (torque at limit).
 
 Additionally, whenever an error code changes, an immediate line is emitted:
 

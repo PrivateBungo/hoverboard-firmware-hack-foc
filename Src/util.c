@@ -481,7 +481,7 @@ void calcAvgSpeed(void) {
     #endif
 
     // Handle the case when SPEED_COEFFICIENT sign is negative (which is when most significant bit is 1)
-    if (SPEED_COEFFICIENT & (1 << 16)) {
+    if (SPEED_COEFFICIENT & (1 << 15)) {
       speedAvg    = -speedAvg;
     } 
     speedAvgAbs   = abs(speedAvg);

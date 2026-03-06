@@ -289,6 +289,8 @@ int main(void) {
     uint8_t setpointSlipGapClampActive = 0U;
     int16_t motorControllerSpeedErrorOut = 0;
     uint8_t motorControllerSaturatedOut = 0U;
+    int16_t measuredSpeedLeftOut = 0;
+    int16_t measuredSpeedRightOut = 0;
     int32_t troubleshootingVelIntegratorLeft = 0;
     int32_t troubleshootingVelIntegratorRight = 0;
     int16_t troubleshootingVelocitySetpointRpmActive = 0;
@@ -656,10 +658,13 @@ int main(void) {
         #if !defined(INVERT_R_DIRECTION)
           measuredSpeedRight = -measuredSpeedRight;
         #endif
-        if (SPEED_COEFFICIENT & (1 << 16)) {
+        if (SPEED_COEFFICIENT & (1 << 15)) {
           measuredSpeedLeft = -measuredSpeedLeft;
           measuredSpeedRight = -measuredSpeedRight;
         }
+
+        measuredSpeedLeftOut  = measuredSpeedLeft;
+        measuredSpeedRightOut = measuredSpeedRight;
 
         speedErrorRpmLeft = (int16_t)(troubleshootingVelocitySetpointRpmActive - measuredSpeedLeft);
         speedErrorRpmRight = (int16_t)(troubleshootingVelocitySetpointRpmActive - measuredSpeedRight);
@@ -1047,7 +1052,7 @@ int main(void) {
       }
 
       if (main_loop_counter % DEBUG_SETPOINT_PRINT_INTERVAL_LOOPS == 0U) {
-        printf("SetpointTrace mode:%s rawLong:%d longOff:%d rawLongMinusOff:%d uCmd:%d cmdEff:%d arm:%d blk:%d nz:%u calibA:%u calibL:%u calibI:%u vIntent:%d vSet:%d aSet:%d vAct:%d vErr:%d vSat:%u slip:%u zLatchMs:%u zRel:%u\r\n",
+        printf("SetpointTrace mode:%s rawLong:%d longOff:%d rawLongMinusOff:%d uCmd:%d cmdEff:%d arm:%d blk:%d nz:%u calibA:%u calibL:%u calibI:%u vIntent:%d vSet:%d aSet:%d vAct:%d vMeasL:%d vMeasR:%d vErr:%d vSat:%u slip:%u zLatchMs:%u zRel:%u\r\n",
           IntentModeToString((IntentStateMachineMode)intentModeOut),
           longitudinalRawCmd,
           commandFilterLongitudinalOffsetOut,
@@ -1064,6 +1069,8 @@ int main(void) {
           setpointVelocityOut,
           setpointAccelerationOut,
           speedAvg,
+          measuredSpeedLeftOut,
+          measuredSpeedRightOut,
           motorControllerSpeedErrorOut,
           (unsigned)motorControllerSaturatedOut,
           (unsigned)setpointSlipGapClampActive,
@@ -1118,14 +1125,34 @@ int main(void) {
     // ####### FEEDBACK SERIAL OUT #######
     #if defined(FEEDBACK_SERIAL_USART2) || defined(FEEDBACK_SERIAL_USART3)
       if (main_loop_counter % 2 == 0) {    // Send data periodically every 10 ms
+        /*
+         * Normalise per-wheel speeds to vehicle-forward sign convention before
+         * sending in the feedback frame.  The raw FOC output n_mot uses opposite
+         * signs for left vs right because the motors are physically mirrored.
+         * Applying the same corrections as calcAvgSpeed() and the PI controller
+         * makes speedR_meas and speedL_meas both positive when going forward,
+         * consistent with the speed setpoint sign.
+         */
+        int16_t fbSpeedLeft  = (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_LEFT);
+        int16_t fbSpeedRight = (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_RIGHT);
+        #if defined(INVERT_L_DIRECTION)
+          fbSpeedLeft = -fbSpeedLeft;
+        #endif
+        #if !defined(INVERT_R_DIRECTION)
+          fbSpeedRight = -fbSpeedRight;
+        #endif
+        if (SPEED_COEFFICIENT & (1 << 15)) {
+          fbSpeedLeft  = -fbSpeedLeft;
+          fbSpeedRight = -fbSpeedRight;
+        }
         #if defined(FEEDBACK_SERIAL_USART2)
           if(__HAL_DMA_GET_COUNTER(huart2.hdmatx) == 0) {
             UartReporting_PrepareFrame(&feedbackFrame,
                                        (uint16_t)SERIAL_START_FRAME,
                                        (int16_t)input1[inIdx].cmd,
                                        (int16_t)input2[inIdx].cmd,
-                                       (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_RIGHT),
-                                       (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_LEFT),
+                                       fbSpeedRight,
+                                       fbSpeedLeft,
                                        (int16_t)batVoltageCalib,
                                        (int16_t)board_temp_deg_c,
                                        (uint16_t)sideboard_leds_L);
@@ -1139,8 +1166,8 @@ int main(void) {
                                        (uint16_t)SERIAL_START_FRAME,
                                        (int16_t)input1[inIdx].cmd,
                                        (int16_t)input2[inIdx].cmd,
-                                       (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_RIGHT),
-                                       (int16_t)FocAdapter_GetMotorSpeed(FOC_ADAPTER_MOTOR_LEFT),
+                                       fbSpeedRight,
+                                       fbSpeedLeft,
                                        (int16_t)batVoltageCalib,
                                        (int16_t)board_temp_deg_c,
                                        (uint16_t)sideboard_leds_R);
