@@ -113,3 +113,11 @@ Parser notes:
 3. Verify electrical level compatibility (especially USART2).
 4. For binary mode, verify start frame `0xABCD` and checksum.
 5. For debug protocol, verify each command starts with `$` and ends with newline.
+
+---
+
+## See also
+
+- **[UART Architecture](uart_architecture.md)** — full reference covering physical ports,
+  all serial roles, mutual-exclusion rules, per-variant allocations, `printf` routing
+  explanation, switching from debug to binary control+feedback, and a troubleshooting table.

@@ -18,6 +18,7 @@ Table of Contents
 * [FOC Firmware](#foc-firmware)
 * [Example Variants](#example-variants)
 * [USART2 Control and Feedback on the Left Sensor Cable](#usart2-control-binary-and-feedback-on-the-left-sensor-cable)
+* **[UART Architecture](/docs/uart_architecture.md)** — full guide: roles, conflicts, per-variant allocations, frame formats, printf routing, and troubleshooting
 * [Projects and Links](#projects-and-links)
 * [Contributions](#contributions)
 
@@ -190,7 +191,7 @@ To explore the controller without a Matlab/Simulink installation click on the li
 
 - **VARIANT_ADC**: The motors are controlled by two potentiometers connected to the Left sensor cable (long wired)
 - **VARIANT_USART**: The motors are controlled via serial protocol on the LEFT sensor cable (USART2, long wired). The commands can be sent from an Arduino or a Linux host. Check out the [hoverserial.ino](/Arduino/hoverserial) as an example sketch, or use the [Linux test script](/tools/scripts/uart_control_test.py). See also [USART2 control+feedback setup](#usart2-controlbinary-and-feedback-on-the-left-sensor-cable) below.
-- Need a quick UART reference? See [Serial communication cheat sheet](/docs/serial_communication_cheatsheet.md).
+- Need a quick UART reference? See [Serial communication cheat sheet](/docs/serial_communication_cheatsheet.md) or the full [UART Architecture document](/docs/uart_architecture.md).
 - **VARIANT_NUNCHUK**: Wii Nunchuk offers one hand control for throttle, braking and steering. This was one of the first input device used for electric armchairs or bottle crates.
 - **VARIANT_PPM**: RC remote control with PPM Sum signal.
 - **VARIANT_PWM**: RC remote control with PWM signal.
