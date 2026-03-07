@@ -154,7 +154,107 @@
 // Limitation settings
 #define I_MOT_MAX       13              // [A] Maximum single motor current limit
 #define I_DC_MAX        15              // [A] Maximum stage2 DC Link current limit for Commutation and Sinusoidal types (This is the final current protection. Above this value, current chopping is applied. To avoid this make sure that I_DC_MAX = I_MOT_MAX + 2A)
-#define N_MOT_MAX       150             // [rpm] Maximum motor speed limit
+#define N_MOT_MAX       550             // [rpm] Maximum motor speed limit
+
+// ---- FOC Startup / Commutation Tuning ----
+//
+// How motor startup works (FOC with Hall sensors):
+//   1. At standstill the controller is in OPEN_MODE for one cycle, then
+//      immediately enters the requested control mode (e.g. TRQ_MODE).
+//   2. While |speed| < MOTOR_CTRL_FOC_ACT_RPM the commutation output uses
+//      simple 6-step (COM_Method): the current Hall sector decides which two
+//      of three phases are energised.  No angle interpolation is needed.
+//   3. Once |speed| >= MOTOR_CTRL_FOC_ACT_RPM **and** the speed is stable
+//      (transition-detection cleared), the controller switches to full FOC
+//      with angle interpolation (FOC_Method / sine modulation).
+//   4. If the speed later drops below MOTOR_CTRL_FOC_DEACT_RPM, commutation
+//      falls back to 6-step.
+//
+// Keeping MOTOR_CTRL_FOC_ACT_RPM low (e.g. 2 RPM) means the motor spends
+// almost no time in the coarse 6-step region before FOC takes over, which
+// reduces vibration at low speed.
+//
+// ---- Where the PI controllers live and when they run ----
+//
+// All PI controllers live inside Src/BLDC_controller.c (Simulink auto-generated code).
+// The code is structured as functional blocks scheduled by a Task_Scheduler state chart:
+//
+//   F01_Estimations        – speed/angle estimation from Hall sensors
+//   F02_Diagnostics        – stall & error detection
+//   F03_Control_Mode_Manager – selects OPEN/VLT/SPD/TRQ mode
+//   F04_Field_Weakening    – optional field weakening
+//   F05_Field_Oriented_Control – contains the FOC PI controllers
+//   F06_Control_Type_Management – selects commutation output method
+//
+// The PI controllers inside F05 (FOC subsystem, approx lines 2448-2790) are:
+//
+//   1. SPEED PI  (SPD_MODE, cf_nKp/cf_nKi)  – Src/BLDC_controller.c:2614
+//      error = speed_setpoint − measured_speed → PI → Vq voltage
+//      Active only when z_ctrlMod == SPD_MODE (2).
+//
+//   2. TORQUE PI (TRQ_MODE, cf_iqKp/cf_iqKi) – Src/BLDC_controller.c:2699
+//      error = current_setpoint − measured_iq  → PI → Vq voltage
+//      Active only when z_ctrlMod == TRQ_MODE (3).
+//      This closes the current (torque) loop in d-q space.
+//
+//   3. Vd PI     (cf_idKp/cf_idKi)            – Src/BLDC_controller.c:2784
+//      error = id_setpoint − measured_id       → PI → Vd voltage
+//      Active when rtb_LogicalOperator is true (= FOC commutation active).
+//      Controls the d-axis current (field weakening / flux alignment).
+//
+//   4. VOLTAGE MODE (VLT_MODE, case 0)        – Src/BLDC_controller.c:2479
+//      No PI controller.  The input target is directly scaled to a voltage
+//      command, passed through saturation limits.
+//
+//   5. OPEN MODE (case 3)                     – Src/BLDC_controller.c:2709
+//      No PI controller.  The rate-limited input from F03 is passed straight
+//      through as the voltage command.
+//
+// Protection integrators (I_backCalc_fixdt) in F05/Motor_Limitations (approx line 2295):
+//   - Voltage_Mode_Protection:  current-limit & speed-limit integrators
+//   - Torque_Mode_Protection:   speed-limit integrator (n_max − |speed|)
+//   - Speed_Mode_Protection:    current-limit clamp
+//   These are always active for the current control mode, regardless of
+//   whether the commutation output is 6-step or FOC.
+//
+// ---- Are the PI controllers active during 6-step? YES. ----
+//
+// The PI controllers (Speed PI, Torque PI, Vd PI) compute a voltage
+// magnitude (rtb_Saturation / Merge / Switch1).  This voltage then flows
+// into F06_Control_Type_Management (approx line 3010) which decides HOW to
+// apply it to the three motor phases:
+//
+//   if (rtb_LogicalOperator && FOC_CTRL):
+//       → FOC_Method:  inverse Park+Clarke transforms the Vq/Vd voltages
+//         into smooth sinusoidal 3-phase PWM using the interpolated angle.
+//   else:
+//       → COM_Method (6-step):  the voltage magnitude is multiplied by the
+//         commutation map z_commutMap_M1[hallPos] to produce simple
+//         on/off/float phase patterns.
+//
+// So the PI controllers run in EVERY cycle regardless of commutation method.
+// The only thing that changes between 6-step and FOC is how the PI output
+// voltage is distributed to the three motor phases:
+//   - 6-step:  coarse (two phases active, one floating, 60° sectors)
+//   - FOC:     smooth sinusoidal (all three phases modulated continuously)
+//
+// At cold boot (standstill, no Hall edges yet):
+//   - The angle is unknown, but 6-step doesn't need an angle; it reads the
+//     Hall sensors directly to pick the correct commutation sector.
+//   - The PI controllers are already running (TRQ or SPD mode) and
+//     producing a voltage command that 6-step applies.
+//   - After the first few Hall edges, the speed becomes non-zero and FOC
+//     commutation takes over (smooth angle interpolation kicks in).
+//
+// MOTOR_CTRL_STANDSTILL_GATE_RPM controls the stall-detection gate.  When
+// set > 0 the controller detects a stall when speed < this value AND input
+// > ~60 %, forcing OPEN_MODE.  At standstill this creates a deadlock
+// (motor needs torque to move, but stall detection resets the voltage ramp).
+// Set to 0 to disable.
+//
+#define MOTOR_CTRL_STANDSTILL_GATE_RPM  0   // [rpm] Stall-detection gate. 0 = disabled (recommended).
+#define MOTOR_CTRL_FOC_ACT_RPM         2   // [rpm] Speed above which FOC commutation activates (low = less vibration at startup).
+#define MOTOR_CTRL_FOC_DEACT_RPM       1   // [rpm] Speed below which FOC falls back to 6-step (must be < FOC_ACT_RPM).
 
 // Field Weakening / Phase Advance
 #define FIELD_WEAK_ENA  0               // [-] Field Weakening / Phase Advance enable flag: 0 = Disabled (default), 1 = Enabled

@@ -242,6 +242,12 @@ void BLDC_Init(void) {
   rtP_Left.a_phaAdvMax          = PHASE_ADV_MAX << 4;                   // fixdt(1,16,4)
   rtP_Left.r_fieldWeakHi        = FIELD_WEAK_HI << 4;                   // fixdt(1,16,4)
   rtP_Left.r_fieldWeakLo        = FIELD_WEAK_LO << 4;                   // fixdt(1,16,4)
+  rtP_Left.n_stdStillDet        = MOTOR_CTRL_STANDSTILL_GATE_RPM << 4;  // fixdt(1,16,4) Standstill stall-detection gate. 0 disables.
+  rtP_Left.n_commDeacvHi        = MOTOR_CTRL_FOC_ACT_RPM << 4;         // fixdt(1,16,4) Speed at which FOC commutation activates
+  rtP_Left.n_commAcvLo          = MOTOR_CTRL_FOC_DEACT_RPM << 4;       // fixdt(1,16,4) Speed at which FOC falls back to 6-step
+  rtP_Left.dz_cntTrnsDetHi      = rtP_Left.z_maxCntRst + 2;           // Disable transition detection: Counter() can return z_maxCntRst+1 at saturation,
+                                                                        // so setting the threshold to z_maxCntRst+2 means the relay never fires.
+                                                                        // This prevents the first few hall edges from blocking FOC activation.
 
   rtP_Right                     = rtP_Left;     // Copy the Left motor parameters to the Right motor parameters
   rtP_Right.z_selPhaCurMeasABC  = 1;            // Right motor measured current phases {Blue, Yellow} = {iB, iC} -> do NOT change
@@ -261,6 +267,14 @@ void BLDC_Init(void) {
   /* Initialize BLDC controllers */
   BLDC_controller_initialize(rtM_Left);
   BLDC_controller_initialize(rtM_Right);
+
+  /* Pre-seed forward direction so the angle estimator starts with the correct
+   * 0° offset instead of the +60° offset that results from the C-default
+   * Switch2_e = 0.  The first real Hall edge will overwrite this with the
+   * actual direction.  At low speed, 6-step commutation is used which does
+   * not depend on Switch2_e, so reverse startup is unaffected. */
+  rtDW_Left.Switch2_e  = 1;
+  rtDW_Right.Switch2_e = 1;
 }
 
 void Input_Lim_Init(void) {     // Input Limitations - ! Do NOT touch !
