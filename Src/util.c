@@ -242,6 +242,7 @@ void BLDC_Init(void) {
   rtP_Left.a_phaAdvMax          = PHASE_ADV_MAX << 4;                   // fixdt(1,16,4)
   rtP_Left.r_fieldWeakHi        = FIELD_WEAK_HI << 4;                   // fixdt(1,16,4)
   rtP_Left.r_fieldWeakLo        = FIELD_WEAK_LO << 4;                   // fixdt(1,16,4)
+  rtP_Left.n_stdStillDet        = MOTOR_CTRL_STANDSTILL_GATE_RPM << 4;  // fixdt(1,16,4) Standstill stall-detection gate. 0 disables.
 
   rtP_Right                     = rtP_Left;     // Copy the Left motor parameters to the Right motor parameters
   rtP_Right.z_selPhaCurMeasABC  = 1;            // Right motor measured current phases {Blue, Yellow} = {iB, iC} -> do NOT change
@@ -261,6 +262,12 @@ void BLDC_Init(void) {
   /* Initialize BLDC controllers */
   BLDC_controller_initialize(rtM_Left);
   BLDC_controller_initialize(rtM_Right);
+
+  /* Pre-seed forward direction so the angle estimator starts with the correct
+   * 0° offset instead of the +60° offset that results from the C-default
+   * Switch2_e = 0.  The first real Hall edge will overwrite this value. */
+  rtDW_Left.Switch2_e  = 1;
+  rtDW_Right.Switch2_e = 1;
 }
 
 void Input_Lim_Init(void) {     // Input Limitations - ! Do NOT touch !

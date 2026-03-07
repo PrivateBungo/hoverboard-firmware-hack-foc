@@ -156,6 +156,13 @@
 #define I_DC_MAX        15              // [A] Maximum stage2 DC Link current limit for Commutation and Sinusoidal types (This is the final current protection. Above this value, current chopping is applied. To avoid this make sure that I_DC_MAX = I_MOT_MAX + 2A)
 #define N_MOT_MAX       150             // [rpm] Maximum motor speed limit
 
+// Standstill / Startup
+#define MOTOR_CTRL_STANDSTILL_GATE_RPM  0   // [rpm] Standstill stall-detection gate speed. 0 = disabled (recommended).
+                                            // When enabled (>0), the controller detects a stall when speed < this value
+                                            // AND input > ~60%. Stall detection forces OPEN_MODE, which at standstill
+                                            // creates a deadlock: the motor needs torque to move but stall detection
+                                            // resets the voltage ramp. Set to 0 to allow the motor to start from standstill.
+
 // Field Weakening / Phase Advance
 #define FIELD_WEAK_ENA  0               // [-] Field Weakening / Phase Advance enable flag: 0 = Disabled (default), 1 = Enabled
 #define FIELD_WEAK_MAX  3               // [A] Maximum Field Weakening D axis current (only for FOC). Higher current results in higher maximum speed. Up to 10A has been tested using 10" wheels.
