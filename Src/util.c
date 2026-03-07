@@ -154,7 +154,7 @@ SerialSideboard Sideboard_L_raw;
 static uint32_t Sideboard_L_len = sizeof(Sideboard_L);
 #endif
 
-#if defined(DEBUG_SERIAL_USART3) || defined(CONTROL_SERIAL_USART3) || defined(SIDEBOARD_SERIAL_USART3)
+#if defined(CONTROL_SERIAL_USART3) || defined(SIDEBOARD_SERIAL_USART3)
 static uint8_t  rx_buffer_R[SERIAL_BUFFER_SIZE];      // USART Rx DMA circular buffer
 static uint32_t rx_buffer_R_len = ARRAY_LEN(rx_buffer_R);
 #endif
@@ -243,6 +243,20 @@ void BLDC_Init(void) {
   rtP_Left.r_fieldWeakHi        = FIELD_WEAK_HI << 4;                   // fixdt(1,16,4)
   rtP_Left.r_fieldWeakLo        = FIELD_WEAK_LO << 4;                   // fixdt(1,16,4)
 
+  // FOC startup overrides (default values in BLDC_controller_data.c are too conservative)
+  // Disable standstill detection latch: with n_stdStillDet=0, Abs5 < 0 is never true so
+  // errCode bit2 (=4) cannot latch even when the motor is stalled and PI winds up.
+  rtP_Left.n_stdStillDet        = 0;
+  // Lower FOC activation / 6-step deactivation thresholds so FOC engages almost immediately
+  // (defaults: n_commDeacvHi=480=30rpm, n_commAcvLo=240=15rpm).
+  rtP_Left.n_commDeacvHi        = 2 << 4;                               // fixdt(1,16,4): FOC activates at 2 rpm
+  rtP_Left.n_commAcvLo          = 1 << 4;                               // fixdt(1,16,4): 6-step reactivates at 1 rpm
+  // Disable the transition-detection relay by setting its HI threshold above the counter
+  // saturation value (z_maxCntRst=2000, Counter() saturates at z_maxCntRst+1=2001, so +2
+  // ensures the relay never opens and never blocks FOC).
+  // Using z_maxCntRst+2 rather than a hard-coded 2002 makes the relationship explicit.
+  rtP_Left.dz_cntTrnsDetHi      = rtP_Left.z_maxCntRst + 2;            // effectively disables transition-detection
+
   rtP_Right                     = rtP_Left;     // Copy the Left motor parameters to the Right motor parameters
   rtP_Right.z_selPhaCurMeasABC  = 1;            // Right motor measured current phases {Blue, Yellow} = {iB, iC} -> do NOT change
 
@@ -261,6 +275,12 @@ void BLDC_Init(void) {
   /* Initialize BLDC controllers */
   BLDC_controller_initialize(rtM_Left);
   BLDC_controller_initialize(rtM_Right);
+
+  // Pre-seed the direction estimator state.  The C zero-init leaves Switch2_e=0 which
+  // causes the angle estimator to use hallPos+1 (60° off) on the first Hall edge.
+  // Setting it to 1 gives the correct angle = hallPos from the very first edge.
+  rtDW_Left.Switch2_e  = 1;
+  rtDW_Right.Switch2_e = 1;
 }
 
 void Input_Lim_Init(void) {     // Input Limitations - ! Do NOT touch !
@@ -292,8 +312,10 @@ void Input_Init(void) {
     HAL_UART_Receive_DMA(&huart2, (uint8_t *)rx_buffer_L, sizeof(rx_buffer_L));
     UART_DisableRxErrors(&huart2);
   #endif
-  #if defined(DEBUG_SERIAL_USART3) || defined(CONTROL_SERIAL_USART3) || defined(SIDEBOARD_SERIAL_USART3)
+  #if defined(CONTROL_SERIAL_USART3) || defined(SIDEBOARD_SERIAL_USART3)
     HAL_UART_Receive_DMA(&huart3, (uint8_t *)rx_buffer_R, sizeof(rx_buffer_R));
+  #endif
+  #if defined(DEBUG_SERIAL_USART3) || defined(CONTROL_SERIAL_USART3) || defined(SIDEBOARD_SERIAL_USART3)
     UART_DisableRxErrors(&huart3);
   #endif
 
@@ -1158,13 +1180,13 @@ void usart2_rx_check(void)
  */
 void usart3_rx_check(void)
 {
-  #if defined(DEBUG_SERIAL_USART3) || defined(CONTROL_SERIAL_USART3) || defined(SIDEBOARD_SERIAL_USART3)
+  #if defined(CONTROL_SERIAL_USART3) || defined(SIDEBOARD_SERIAL_USART3)
   static uint32_t old_pos;
-  uint32_t pos;  
+  uint32_t pos;
   pos = rx_buffer_R_len - __HAL_DMA_GET_COUNTER(huart3.hdmarx);         // Calculate current position in buffer
   #endif
 
-  #if defined(DEBUG_SERIAL_USART3)
+  #if defined(DEBUG_SERIAL_USART3) && (defined(CONTROL_SERIAL_USART3) || defined(SIDEBOARD_SERIAL_USART3))
   if (pos != old_pos) {                                                 // Check change in received data
     if (pos > old_pos) {                                                // "Linear" buffer mode: check if current position is over previous one
       usart_process_debug(&rx_buffer_R[old_pos], pos - old_pos);        // Process data
@@ -1211,7 +1233,7 @@ void usart3_rx_check(void)
   }
   #endif // SIDEBOARD_SERIAL_USART3
 
-  #if defined(DEBUG_SERIAL_USART3) || defined(CONTROL_SERIAL_USART3) || defined(SIDEBOARD_SERIAL_USART3)
+  #if defined(CONTROL_SERIAL_USART3) || defined(SIDEBOARD_SERIAL_USART3)
   old_pos = pos;                                                        // Update old position
   if (old_pos == rx_buffer_R_len) {                                     // Check and manually update if we reached end of buffer
     old_pos = 0;

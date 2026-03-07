@@ -11,7 +11,7 @@
 // or use VARIANT environment variable for example like "make -e VARIANT=VARIANT_NUNCHUK". Select only one at a time.
 #if !defined(PLATFORMIO)
   //#define VARIANT_ADC         // Variant for control via ADC input
-  #define VARIANT_USART       // Variant for Serial control via USART3 input
+  #define VARIANT_USART       // Variant for Serial control via USART2 input; USART3 used for debug output
   //#define VARIANT_NUNCHUK     // Variant for Nunchuk controlled vehicle build
   //#define VARIANT_PPM         // Variant for RC-Remote with PPM-Sum Signal
   //#define VARIANT_PWM         // Variant for RC-Remote with PWM Signal
@@ -154,7 +154,7 @@
 // Limitation settings
 #define I_MOT_MAX       13              // [A] Maximum single motor current limit
 #define I_DC_MAX        15              // [A] Maximum stage2 DC Link current limit for Commutation and Sinusoidal types (This is the final current protection. Above this value, current chopping is applied. To avoid this make sure that I_DC_MAX = I_MOT_MAX + 2A)
-#define N_MOT_MAX       150             // [rpm] Maximum motor speed limit
+#define N_MOT_MAX       550             // [rpm] Maximum motor speed limit (raised from 150: typical hoverboard wheel needs ~400 rpm at 15 km/h; 550 gives headroom without stressing the FETs)
 
 // Field Weakening / Phase Advance
 #define FIELD_WEAK_ENA  0               // [-] Field Weakening / Phase Advance enable flag: 0 = Disabled (default), 1 = Enabled
@@ -168,6 +168,13 @@
 // #define ELECTRIC_BRAKE_ENABLE           // [-] Flag to enable electric brake and replace the motor "freewheel" with a constant braking when the input torque request is 0. Only available and makes sense for TORQUE mode.
 // #define ELECTRIC_BRAKE_MAX    100       // (0, 500) Maximum electric brake to be applied when input torque request is 0 (pedal fully released).
 // #define ELECTRIC_BRAKE_THRES  120       // (0, 500) Threshold below at which the electric brake starts engaging.
+
+// Open-loop startup for smooth cold-start (eliminates electromagnetic lock at standstill)
+#define OPENLOOP_ENABLE                     // [-] Enable open-loop sinusoidal startup. Comment-out to disable.
+#define OPENLOOP_VOLTAGE_MAX    700         // [-] Maximum voltage amplitude during open-loop (0-16000). ~5% duty cycle.
+#define OPENLOOP_ALIGN_DURATION 3200        // [-] Align phase duration in ISR cycles. 3200 = 0.2 sec at 16 kHz.
+#define OPENLOOP_ACCEL_DURATION 16000       // [-] Acceleration ramp duration in ISR cycles. 16000 = 1.0 sec at 16 kHz.
+#define OPENLOOP_DELTA_THETA_MAX 36         // [-] Max angle increment per cycle. 36 ≈ 100 RPM mechanical with 15 pole pairs.
 // ########################### END OF MOTOR CONTROL ########################
 
 
@@ -335,9 +342,11 @@
     #define AUX_INPUT2           3, -1000, 0, 1000, 0     // TYPE, MIN, MID, MAX, DEADBAND. See INPUT FORMAT section
   #else
     #define FLASH_WRITE_KEY      0x1002  // Flash memory writing key. Change this key to ignore the input calibrations from the flash memory and use the ones in config.h
+    #define DEBUG_SERIAL_USART3         // right sensor board cable debug output (USART2 is used for feedback/control)
   #endif
 
-  // #define TANK_STEERING              // use for tank steering, each input controls each wheel 
+  // #define TANK_STEERING              // use for tank steering, each input controls each wheel
+  #define INVERT_L_DIRECTION            // Left motor goes backward with +cmd (data-confirmed); flip it
   // #define SUPPORT_BUTTONS_LEFT       // use left sensor board cable for button inputs.  Disable DEBUG_SERIAL_USART2!
   // #define SUPPORT_BUTTONS_RIGHT      // use right sensor board cable for button inputs. Disable DEBUG_SERIAL_USART3!
 #endif
