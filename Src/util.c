@@ -240,24 +240,7 @@ void BLDC_Init(void) {
   rtP_Left.n_stdStillDet        = MOTOR_CTRL_STANDSTILL_GATE_RPM << 4;    // fixdt(1,16,4)
 
   // FOC vs 6-step commutation gate.
-  // The relay n_commDeacv controls whether FOC_Method or COM_Method (6-step) is used:
-  //   relay ON  (n_commDeacv_Mode=true):  FOC active
-  //   relay OFF (n_commDeacv_Mode=false): 6-step block commutation
-  //
-  // At cold start, the direction state Switch2_e is uninitialised (= 0).  When
-  // the FOC angle estimator runs with Switch2_e=0 it places the injection one
-  // full sector (60°) ahead of the actual rotor position.  The resulting torque
-  // is only 50–87% of optimal and can produce an opposing force on some positions.
-  // 6-step (COM_Method) is immune to this: it uses the raw Hall look-up table and
-  // always commutates in the correct direction.
-  //
-  // With n_commDeacvHi=16 (1 rpm in fixdt(1,16,4)):
-  //   Abs5=0 (standstill, no Hall edges) → relay OFF → 6-step → full torque ✓
-  //   First Hall edge → Switch2_e set to ±1, Abs5 jumps to ~85 (≈5 rpm, seeded
-  //   from z_maxCntRst=2000) → relay ON → FOC with correct angle ✓
-  // With n_commAcvLo=0:
-  //   FOC only deactivates back to standstill (Abs5=0), not while rolling.
-  //
+  // See Inc/config.h MOTOR_CTRL_FOC_COMM_ACT/DEACT_RPM for the relay thresholds.
   // NOTE: confusing naming convention in the Simulink model:
   //   n_commDeacvHi = "commutation DEactivation HIGH" → relay turns ON  (FOC) when |speed| >= n_commDeacvHi
   //   n_commAcvLo   = "commutation ACTivation   LOW"  → relay turns OFF (6-step) when |speed| <= n_commAcvLo
@@ -296,6 +279,23 @@ void BLDC_Init(void) {
   /* Initialize BLDC controllers */
   BLDC_controller_initialize(rtM_Left);
   BLDC_controller_initialize(rtM_Right);
+
+  // Pre-seed Switch2_e to 1 (forward direction assumed).
+  //
+  // Switch2_e is the direction flag (±1) used by the FOC angle estimator.  It
+  // is C-default-initialised to 0 and only updated inside the Hall-edge
+  // detection block.  With Switch2_e = 0 the angle estimator takes an
+  // unintended branch that places the voltage injection 60° ahead of the rotor:
+  //
+  //   angle (Switch2_e=0): (hallPos+1) × 4096  ← 60° off, creates asymmetry
+  //   angle (Switch2_e=1): hallPos × 4096       ← sector start, ≤30° off
+  //
+  // Pre-seeding to 1 gives the correct angle formula for forward motion from the
+  // first PWM cycle, and ≥87% torque efficiency in reverse (cos 30° = 0.87).
+  // Once the first Hall edge fires Switch2_e is updated to the true direction (±1)
+  // and the angle becomes exact for both forward and reverse.
+  rtDW_Left.Switch2_e  = 1;
+  rtDW_Right.Switch2_e = 1;
 }
 
 void Input_Lim_Init(void) {     // Input Limitations - ! Do NOT touch !

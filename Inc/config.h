@@ -158,32 +158,34 @@
 #define MOTOR_CTRL_STANDSTILL_GATE_RPM  10  // [rpm] Speed threshold below which the standstill protection gates the motor (prevents Hall-quantization-induced torque bursts at near-standstill)
 // FOC startup commutation control.
 //
-// At exactly zero speed the direction state Switch2_e is uninitialized (= 0),
-// which causes the FOC angle estimator to place the injection 60° ahead of the
-// actual Hall sector.  The resulting torque is 50–87% of optimal and can fight
-// the rotor on some positions — causing "blocked at standstill".
+// The direction state Switch2_e (±1) is only updated inside the Hall-edge
+// detection block.  It C-default-initialises to 0, so on the first call the
+// angle estimator takes an unintended branch:
 //
-// 6-step (COM_Method) bypasses the angle estimator entirely and uses the raw
-// Hall-sector look-up table, so it always applies force in the correct direction.
+//   Switch2_e = 0 (cold start): angle = (hallPos+1) × 4096   ← wrong, 60° ahead
+//   Switch2_e = +1 (forward):   angle = hallPos × 4096        ← correct for forward
+//   Switch2_e = -1 (backward):  angle = (hallPos+1) × 4096 – correction ← correct for reverse
 //
-// Strategy:
-//   • Keep 6-step at exact standstill (Abs5 = 0, Switch2_e not yet set).
-//   • Switch to FOC as soon as the first Hall edge fires.  At that point
-//     Switch2_e is set to ±1 AND Abs5 jumps to ~5 rpm (seeded from z_maxCntRst),
-//     which exceeds any reasonable ACT_RPM threshold.
-//   • The jerk-detector (dz_cntTrnsDet) is disabled in BLDC_Init() so the
-//     startup-transient large Δperiod can never revert back to 6-step above
-//     ACT_RPM.
+// With the wrong 60° offset the FOC frame does not align with the rotor.
+// For forward torque this still produces ≥50% torque, but for reverse torque
+// the same 60° misalignment can produce a net opposing force — hence the motor
+// stalls in reverse while forward works.
 //
-// MOTOR_CTRL_FOC_COMM_ACT_RPM = 1  →  n_commDeacvHi = 16 (fixdt).
-//   Relay stays OFF while Abs5 = 0 (standstill) → 6-step.
-//   Relay flips ON once Abs5 ≥ 16 → FOC.  The very first Hall edge from
-//   standstill produces Abs5 ≈ 85 (≈5 rpm) from the initial z_maxCntRst
-//   seed, so FOC activates immediately on first movement.
-// MOTOR_CTRL_FOC_COMM_DEACT_RPM = 0  →  n_commAcvLo = 0.
-//   FOC only deactivates at Abs5 = 0 (true standstill again) — tight
-//   hysteresis, prevents any oscillation while rolling.
-#define MOTOR_CTRL_FOC_COMM_ACT_RPM     1   // [rpm] Speed above which FOC/SIN method activates (relay ON; default firmware: 30 rpm)
+// Root fix (applied in BLDC_Init):
+//   rtDW_Left.Switch2_e = rtDW_Right.Switch2_e = 1
+//
+// This pre-seeds the direction as "forward" before the first Hall edge.  The
+// angle is then ≤30° off from the true rotor position for any initial Hall
+// sector, giving ≥87% torque in forward AND reverse (negative Iq with the
+// correct frame polarity).  The first Hall edge in either direction updates
+// Switch2_e to the actual direction and the angle becomes exact.
+//
+// With Switch2_e initialised, the 6-step fallback is no longer needed for cold-
+// start, so ACT_RPM is set back to 0 (FOC active whenever Abs5 ≥ 0).
+// The jerk-detector fix (dz_cntTrnsDetHi = z_maxCntRst+1 in BLDC_Init) is
+// still required to prevent the first-Hall-edge large period Δ from momentarily
+// disabling FOC.
+#define MOTOR_CTRL_FOC_COMM_ACT_RPM     0   // [rpm] Speed above which FOC/SIN method activates (relay ON; default firmware: 30 rpm)
 #define MOTOR_CTRL_FOC_COMM_DEACT_RPM   0   // [rpm] Speed below which FOC/SIN method deactivates (relay OFF; default firmware: 15 rpm)
 
 // Field Weakening / Phase Advance
