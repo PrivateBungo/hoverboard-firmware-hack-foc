@@ -168,6 +168,13 @@
 // #define ELECTRIC_BRAKE_ENABLE           // [-] Flag to enable electric brake and replace the motor "freewheel" with a constant braking when the input torque request is 0. Only available and makes sense for TORQUE mode.
 // #define ELECTRIC_BRAKE_MAX    100       // (0, 500) Maximum electric brake to be applied when input torque request is 0 (pedal fully released).
 // #define ELECTRIC_BRAKE_THRES  120       // (0, 500) Threshold below at which the electric brake starts engaging.
+
+// Open-loop startup for smooth cold-start (eliminates electromagnetic lock at standstill)
+#define OPENLOOP_ENABLE                     // [-] Enable open-loop sinusoidal startup. Comment-out to disable.
+#define OPENLOOP_VOLTAGE_MAX    700         // [-] Maximum voltage amplitude during open-loop (0-16000). ~5% duty cycle.
+#define OPENLOOP_ALIGN_DURATION 3200        // [-] Align phase duration in ISR cycles. 3200 = 0.2 sec at 16 kHz.
+#define OPENLOOP_ACCEL_DURATION 16000       // [-] Acceleration ramp duration in ISR cycles. 16000 = 1.0 sec at 16 kHz.
+#define OPENLOOP_DELTA_THETA_MAX 36         // [-] Max angle increment per cycle. 36 ≈ 100 RPM mechanical with 15 pole pairs.
 // ########################### END OF MOTOR CONTROL ########################
 
 

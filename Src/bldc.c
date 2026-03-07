@@ -33,6 +33,10 @@
 #include "BLDC_controller.h"           /* Model's header file */
 #include "rtwtypes.h"
 
+/* Forward declaration for Simulink lookup table helper (defined in BLDC_controller.c).
+ * Signature must match: uint8_T plook_u8s16_evencka(int16_T u, int16_T bp0, uint16_T bpSpace, uint32_T maxIndex) */
+uint8_T plook_u8s16_evencka(int16_T u, int16_T bp0, uint16_T bpSpace, uint32_T maxIndex);
+
 extern RT_MODEL *const rtM_Left;
 extern RT_MODEL *const rtM_Right;
 
@@ -80,6 +84,23 @@ static int16_t offsetdcr    = 2000;
 
 int16_t        batVoltage       = (400 * BAT_CELLS * BAT_CALIB_ADC) / BAT_CALIB_REAL_VOLTAGE;
 static int32_t batVoltageFixdt  = (400 * BAT_CELLS * BAT_CALIB_ADC) / BAT_CALIB_REAL_VOLTAGE << 16;  // Fixed-point filter output initialized at 400 V*100/cell = 4 V/cell converted to fixed-point
+
+#ifdef OPENLOOP_ENABLE
+/* Compile-time guards to catch zero-duration misconfiguration that would cause division by zero */
+_Static_assert(OPENLOOP_ALIGN_DURATION > 0,  "OPENLOOP_ALIGN_DURATION must be > 0");
+_Static_assert(OPENLOOP_ACCEL_DURATION > 0,  "OPENLOOP_ACCEL_DURATION must be > 0");
+
+typedef struct {
+  int16_t  theta;           /* Current synthetic electrical angle [0, 23039] */
+  int16_t  voltage;         /* Current voltage amplitude (ramping up) */
+  int16_t  delta_theta;     /* Current angle increment per ISR cycle (ramping up) */
+  uint16_t counter;         /* Cycle counter for timing phases */
+  uint8_t  phase;           /* 0=inactive, 1=align, 2=rotate */
+} OpenLoopState;
+
+static OpenLoopState olStateL = {0};
+static OpenLoopState olStateR = {0};
+#endif
 
 // =================================
 // DMA interrupt frequency =~ 16 kHz
@@ -202,6 +223,69 @@ void DMA1_Channel1_IRQHandler(void) {
   // motSpeedLeft = rtY_Left.n_mot;
   // motAngleLeft = rtY_Left.a_elecAngle;
 
+#ifdef OPENLOOP_ENABLE
+    /* Open-loop sinusoidal startup override for left motor */
+    if (olStateL.phase == 0 && enableFin && ABS(pwml) > 50 && !rtDW_Left.n_commDeacv_Mode) {
+      /* Start open-loop: initialise angle from current hall sector */
+      int16_t hallValue_l = (int16_t)((hall_ul << 2) | (hall_vl << 1) | hall_wl);
+      int8_t  sector_l    = rtConstP.vec_hallToPos_Value[hallValue_l];
+      olStateL.theta       = (int16_t)(sector_l * 3840 + 1920);
+      olStateL.voltage     = 0;
+      olStateL.delta_theta = 0;
+      olStateL.counter     = 0;
+      olStateL.phase       = 1;
+    }
+
+    if (olStateL.phase > 0) {
+      if (!enableFin || ABS(pwml) <= 50 || rtDW_Left.n_commDeacv_Mode) {
+        /* Exit condition: FOC active, motor disabled, or command removed */
+        olStateL.phase       = 0;
+        olStateL.counter     = 0;
+        olStateL.voltage     = 0;
+        olStateL.delta_theta = 0;
+      } else {
+        olStateL.counter++;
+
+        if (olStateL.phase == 1) {
+          /* ALIGN phase: ramp voltage, hold static angle */
+          olStateL.voltage = (int16_t)((int32_t)OPENLOOP_VOLTAGE_MAX * olStateL.counter / OPENLOOP_ALIGN_DURATION);
+          if (olStateL.counter >= OPENLOOP_ALIGN_DURATION) {
+            olStateL.voltage = OPENLOOP_VOLTAGE_MAX;
+            olStateL.phase   = 2;
+            olStateL.counter = 0;
+          }
+        } else {
+          /* ROTATE phase: ramp delta_theta and advance synthetic angle */
+          int16_t dt = (int16_t)((int32_t)OPENLOOP_DELTA_THETA_MAX * olStateL.counter / OPENLOOP_ACCEL_DURATION);
+          if (dt > OPENLOOP_DELTA_THETA_MAX) {
+            dt = OPENLOOP_DELTA_THETA_MAX;
+          }
+          olStateL.delta_theta = (pwml > 0) ? dt : (int16_t)(-dt);
+
+          olStateL.theta += olStateL.delta_theta;
+          if (olStateL.theta >= 23040) olStateL.theta -= 23040;
+          if (olStateL.theta < 0)      olStateL.theta += 23040;
+
+          if (olStateL.counter > OPENLOOP_ACCEL_DURATION) {
+            olStateL.counter = OPENLOOP_ACCEL_DURATION;
+          }
+        }
+
+        /* Generate 3-phase sinusoidal output from synthetic angle */
+        uint8_T idx_l = plook_u8s16_evencka(olStateL.theta, 0, 128U, 180U);
+        int16_t phaA_l = (int16_t)(((int32_t)olStateL.voltage * rtConstP.r_sin3PhaA_M1_Table[idx_l]) >> 14);
+        int16_t phaB_l = (int16_t)(((int32_t)olStateL.voltage * rtConstP.r_sin3PhaB_M1_Table[idx_l]) >> 14);
+        int16_t phaC_l = (int16_t)(((int32_t)olStateL.voltage * rtConstP.r_sin3PhaC_M1_Table[idx_l]) >> 14);
+
+        /* Scale to match DC_phaA/B/C range and override controller outputs */
+        ul = phaA_l >> 4;
+        vl = phaB_l >> 4;
+        wl = phaC_l >> 4;
+        pwm_margin = 110;  /* same FOC ADC measurement window margin as when FOC_CTRL is active */
+      }
+    }
+#endif
+
     /* Apply commands */
     LEFT_TIM->LEFT_TIM_U    = (uint16_t)CLAMP(ul + pwm_res / 2, pwm_margin, pwm_res-pwm_margin);
     LEFT_TIM->LEFT_TIM_V    = (uint16_t)CLAMP(vl + pwm_res / 2, pwm_margin, pwm_res-pwm_margin);
@@ -239,6 +323,69 @@ void DMA1_Channel1_IRQHandler(void) {
  // errCodeRight  = rtY_Right.z_errCode;
  // motSpeedRight = rtY_Right.n_mot;
  // motAngleRight = rtY_Right.a_elecAngle;
+
+#ifdef OPENLOOP_ENABLE
+    /* Open-loop sinusoidal startup override for right motor */
+    if (olStateR.phase == 0 && enableFin && ABS(pwmr) > 50 && !rtDW_Right.n_commDeacv_Mode) {
+      /* Start open-loop: initialise angle from current hall sector */
+      int16_t hallValue_r = (int16_t)((hall_ur << 2) | (hall_vr << 1) | hall_wr);
+      int8_t  sector_r    = rtConstP.vec_hallToPos_Value[hallValue_r];
+      olStateR.theta       = (int16_t)(sector_r * 3840 + 1920);
+      olStateR.voltage     = 0;
+      olStateR.delta_theta = 0;
+      olStateR.counter     = 0;
+      olStateR.phase       = 1;
+    }
+
+    if (olStateR.phase > 0) {
+      if (!enableFin || ABS(pwmr) <= 50 || rtDW_Right.n_commDeacv_Mode) {
+        /* Exit condition: FOC active, motor disabled, or command removed */
+        olStateR.phase       = 0;
+        olStateR.counter     = 0;
+        olStateR.voltage     = 0;
+        olStateR.delta_theta = 0;
+      } else {
+        olStateR.counter++;
+
+        if (olStateR.phase == 1) {
+          /* ALIGN phase: ramp voltage, hold static angle */
+          olStateR.voltage = (int16_t)((int32_t)OPENLOOP_VOLTAGE_MAX * olStateR.counter / OPENLOOP_ALIGN_DURATION);
+          if (olStateR.counter >= OPENLOOP_ALIGN_DURATION) {
+            olStateR.voltage = OPENLOOP_VOLTAGE_MAX;
+            olStateR.phase   = 2;
+            olStateR.counter = 0;
+          }
+        } else {
+          /* ROTATE phase: ramp delta_theta and advance synthetic angle */
+          int16_t dt = (int16_t)((int32_t)OPENLOOP_DELTA_THETA_MAX * olStateR.counter / OPENLOOP_ACCEL_DURATION);
+          if (dt > OPENLOOP_DELTA_THETA_MAX) {
+            dt = OPENLOOP_DELTA_THETA_MAX;
+          }
+          olStateR.delta_theta = (pwmr > 0) ? dt : (int16_t)(-dt);
+
+          olStateR.theta += olStateR.delta_theta;
+          if (olStateR.theta >= 23040) olStateR.theta -= 23040;
+          if (olStateR.theta < 0)      olStateR.theta += 23040;
+
+          if (olStateR.counter > OPENLOOP_ACCEL_DURATION) {
+            olStateR.counter = OPENLOOP_ACCEL_DURATION;
+          }
+        }
+
+        /* Generate 3-phase sinusoidal output from synthetic angle */
+        uint8_T idx_r = plook_u8s16_evencka(olStateR.theta, 0, 128U, 180U);
+        int16_t phaA_r = (int16_t)(((int32_t)olStateR.voltage * rtConstP.r_sin3PhaA_M1_Table[idx_r]) >> 14);
+        int16_t phaB_r = (int16_t)(((int32_t)olStateR.voltage * rtConstP.r_sin3PhaB_M1_Table[idx_r]) >> 14);
+        int16_t phaC_r = (int16_t)(((int32_t)olStateR.voltage * rtConstP.r_sin3PhaC_M1_Table[idx_r]) >> 14);
+
+        /* Scale to match DC_phaA/B/C range and override controller outputs */
+        ur = phaA_r >> 4;
+        vr = phaB_r >> 4;
+        wr = phaC_r >> 4;
+        pwm_margin = 110;  /* same FOC ADC measurement window margin as when FOC_CTRL is active */
+      }
+    }
+#endif
 
     /* Apply commands */
     RIGHT_TIM->RIGHT_TIM_U  = (uint16_t)CLAMP(ur + pwm_res / 2, pwm_margin, pwm_res-pwm_margin);
