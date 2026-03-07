@@ -27,6 +27,7 @@
 #include "setup.h"
 #include "config.h"
 #include "util.h"
+#include "openloop_debug.h"
 
 // Matlab includes and defines - from auto-code generation
 // ###############################################################################
@@ -399,3 +400,25 @@ void DMA1_Channel1_IRQHandler(void) {
  // ###############################################################################
 
 }
+
+#ifdef OPENLOOP_ENABLE
+/**
+ * openloop_get_snapshot() -- atomically copy open-loop state for both motors.
+ *
+ * Interrupts are disabled for the duration of the copy to prevent torn reads
+ * from the 16 kHz DMA ISR that updates olStateL/olStateR.
+ */
+void openloop_get_snapshot(OpenLoopSnapshot *left, OpenLoopSnapshot *right) {
+  uint32_t prim = __get_PRIMASK();
+  __disable_irq();
+  left->phase        = (int16_t)olStateL.phase;
+  left->theta        = olStateL.theta;
+  left->delta_theta  = olStateL.delta_theta;
+  left->voltage      = olStateL.voltage;
+  right->phase       = (int16_t)olStateR.phase;
+  right->theta       = olStateR.theta;
+  right->delta_theta = olStateR.delta_theta;
+  right->voltage     = olStateR.voltage;
+  if (!prim) { __enable_irq(); }
+}
+#endif /* OPENLOOP_ENABLE */

@@ -45,18 +45,27 @@ Protocol (little-endian, all fields 2 bytes):
         One header row (column names), then data rows.
         Lines starting with '#' are diagnostic comments and can be ignored.
         Columns:
-          t_ms        uptime in ms
-          cmdL,cmdR   motor commands [-1000,1000]
-          cMod        control mode (0=OPEN,1=VLT,2=SPD,3=TRQ)
-          hallL       left Hall sector (1-6; 0/7 = fault)
-          angL        left electrical angle (FOC estimate, fixdt units)
-          spdL        left speed [RPM]
-          phAL..phCL  left phase duty values
-          iqL,idL     left torque/flux currents (raw; divide by 50 for Amps)
-          cABL,cBCL   left phase AB/BC currents (raw ADC; divide by 50 for Amps)
-          dcL         left DC-link current (raw ADC)
-          errL        left error code (0=OK)
-          (hallR..errR)  same set for right motor
+          t_ms          uptime in ms
+          cmdL,cmdR     motor commands [-1000,1000]
+          cModReq       requested control mode (0=OPEN,1=VLT,2=SPD,3=TRQ)
+          cModActL      actual applied mode for left  motor (may differ from cModReq, e.g. forced to OPEN on fault)
+          cModActR      actual applied mode for right motor
+          focL          left  commutation relay (0=6-step active, 1=FOC active)
+          focR          right commutation relay
+          hallL         left Hall sector (1-6; 0/7 = fault)
+          angL          left electrical angle (FOC estimate, fixdt units)
+          spdL          left speed [RPM]
+          phAL..phCL    left BLDC controller phase duty values (DC_phaA/B/C);
+                        NOTE: actual motor drive may differ when OPENLOOP override is active
+          iqL,idL       left torque/flux currents (raw; divide by 50 for Amps)
+          cABL,cBCL     left phase AB/BC currents (raw ADC; divide by 50 for Amps)
+          dcL           left DC-link current (raw ADC)
+          errL          left error code (0=OK)
+          olPhL         left open-loop phase (0=inactive, 1=align, 2=rotate); always 0 if OPENLOOP_ENABLE not defined
+          olThL         left open-loop synthetic theta [0..23039] (electrical angle units)
+          olDthL        left open-loop delta_theta per ISR (signed)
+          olVL          left open-loop voltage amplitude
+          (hallR..olVR) same set for right motor
 
 Usage:
     python3 uart_control_test.py --control_port /dev/ttyUSB0 \\
@@ -201,10 +210,26 @@ def debug_reader(ser: serial.Serial, log_path: str) -> None:
     Background thread: read ASCII lines from the debug port (USART3) and write
     them to *log_path*.  Lines starting with '#' are diagnostic comments and are
     also printed to stdout so they are visible during a live run.
+
+    The script writes the expected CSV header as the very first line of the file
+    so that the log is always well-formed even if the board never sends its own
+    header (e.g. the board was already running when capture started).  If the
+    firmware subsequently sends its own header (a line starting with ``t_ms,``),
+    that duplicate is silently dropped from the file.
     """
+    # Expected CSV header – must match the firmware printf in Src/main.c.
+    CSV_HEADER = (
+        "t_ms,cmdL,cmdR,cModReq,cModActL,cModActR,focL,focR,"
+        "hallL,angL,spdL,phAL,phBL,phCL,iqL,idL,cABL,cBCL,dcL,errL,"
+        "olPhL,olThL,olDthL,olVL,"
+        "hallR,angR,spdR,phAR,phBR,phCR,iqR,idR,cABR,cBCR,dcR,errR,"
+        "olPhR,olThR,olDthR,olVR"
+    )
     line_buf = b""
     with open(log_path, "w", buffering=1) as log_file:
         print(f"[DBG] Logging CSV debug output to: {log_path}", flush=True)
+        # Always write the header first so the file is well-formed from the start.
+        log_file.write(CSV_HEADER + "\n")
         while not _stop_event.is_set():
             try:
                 chunk = ser.read(ser.in_waiting or 1)
@@ -216,9 +241,13 @@ def debug_reader(ser: serial.Serial, log_path: str) -> None:
             while b"\n" in line_buf:
                 line, line_buf = line_buf.split(b"\n", 1)
                 decoded = line.rstrip(b"\r").decode("ascii", errors="replace")
+                # Skip firmware header if script already wrote one (avoid duplicate).
+                if decoded.startswith("t_ms,"):
+                    print(f"[DBG] {decoded}", flush=True)
+                    continue
                 log_file.write(decoded + "\n")
-                # Echo comment lines and the header to stdout for visibility
-                if decoded.startswith("#") or decoded.startswith("t_ms"):
+                # Echo comment lines to stdout for visibility.
+                if decoded.startswith("#"):
                     print(f"[DBG] {decoded}", flush=True)
 
 
