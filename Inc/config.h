@@ -154,14 +154,35 @@
 // Limitation settings
 #define I_MOT_MAX       13              // [A] Maximum single motor current limit
 #define I_DC_MAX        15              // [A] Maximum stage2 DC Link current limit for Commutation and Sinusoidal types (This is the final current protection. Above this value, current chopping is applied. To avoid this make sure that I_DC_MAX = I_MOT_MAX + 2A)
-#define N_MOT_MAX       150             // [rpm] Maximum motor speed limit
+#define N_MOT_MAX       550             // [rpm] Maximum motor speed limit
 
-// Standstill / Startup
-#define MOTOR_CTRL_STANDSTILL_GATE_RPM  0   // [rpm] Standstill stall-detection gate speed. 0 = disabled (recommended).
-                                            // When enabled (>0), the controller detects a stall when speed < this value
-                                            // AND input > ~60%. Stall detection forces OPEN_MODE, which at standstill
-                                            // creates a deadlock: the motor needs torque to move but stall detection
-                                            // resets the voltage ramp. Set to 0 to allow the motor to start from standstill.
+// ---- FOC Startup / Commutation Tuning ----
+//
+// How motor startup works (FOC with Hall sensors):
+//   1. At standstill the controller is in OPEN_MODE for one cycle, then
+//      immediately enters the requested control mode (e.g. TRQ_MODE).
+//   2. While |speed| < MOTOR_CTRL_FOC_ACT_RPM the commutation output uses
+//      simple 6-step (COM_Method): the current Hall sector decides which two
+//      of three phases are energised.  No angle interpolation is needed.
+//   3. Once |speed| >= MOTOR_CTRL_FOC_ACT_RPM **and** the speed is stable
+//      (transition-detection cleared), the controller switches to full FOC
+//      with angle interpolation (FOC_Method / sine modulation).
+//   4. If the speed later drops below MOTOR_CTRL_FOC_DEACT_RPM, commutation
+//      falls back to 6-step.
+//
+// Keeping MOTOR_CTRL_FOC_ACT_RPM low (e.g. 2 RPM) means the motor spends
+// almost no time in the coarse 6-step region before FOC takes over, which
+// reduces vibration at low speed.
+//
+// MOTOR_CTRL_STANDSTILL_GATE_RPM controls the stall-detection gate.  When
+// set > 0 the controller detects a stall when speed < this value AND input
+// > ~60 %, forcing OPEN_MODE.  At standstill this creates a deadlock
+// (motor needs torque to move, but stall detection resets the voltage ramp).
+// Set to 0 to disable.
+//
+#define MOTOR_CTRL_STANDSTILL_GATE_RPM  0   // [rpm] Stall-detection gate. 0 = disabled (recommended).
+#define MOTOR_CTRL_FOC_ACT_RPM         2   // [rpm] Speed above which FOC commutation activates (low = less vibration at startup).
+#define MOTOR_CTRL_FOC_DEACT_RPM       1   // [rpm] Speed below which FOC falls back to 6-step (must be < FOC_ACT_RPM).
 
 // Field Weakening / Phase Advance
 #define FIELD_WEAK_ENA  0               // [-] Field Weakening / Phase Advance enable flag: 0 = Disabled (default), 1 = Enabled
