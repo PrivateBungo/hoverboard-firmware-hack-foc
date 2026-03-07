@@ -247,13 +247,21 @@ void BLDC_Init(void) {
   rtP_Left.n_commDeacvHi        = MOTOR_CTRL_FOC_COMM_ACT_RPM << 4;       // fixdt(1,16,4): FOC activates   when |speed| >= this (was 480 = 30 rpm)
   rtP_Left.n_commAcvLo          = MOTOR_CTRL_FOC_COMM_DEACT_RPM << 4;     // fixdt(1,16,4): FOC deactivates when |speed| <= this (was 240 = 15 rpm)
 
-  // Disable the startup jerk-detector (dz_cntTrnsDet).  Its default threshold
-  // (dz_cntTrnsDetHi=40 counts) fires on the very first hall transition from
-  // standstill: the hall-period counter jumps from z_maxCntRst (~2000) down to
-  // ~1, giving |ΔT|≈1999 >> 40 → dz_cntTrnsDet=true → FOC disabled again.
-  // Setting Hi = z_maxCntRst+1 makes the threshold unreachable (max |ΔT|=1999).
-  rtP_Left.dz_cntTrnsDetHi      = (int16_T)(rtP_Left.z_maxCntRst + 1);    // was 40;  now permanently OFF
-  rtP_Left.dz_cntTrnsDetLo      = (int16_T)(rtP_Left.z_maxCntRst);        // was 20;  always resets if somehow triggered
+  // Disable the startup jerk-detector (dz_cntTrnsDet).
+  //
+  // Default threshold is dz_cntTrnsDetHi=40.  At the very first Hall edge from
+  // standstill the period counter is seeded from z_maxCntRst (=2000 stored, but
+  // the Counter() function returns 2001 — the unsaturated increment — so
+  // UnitDelay3_DSTATE = 2001).  UnitDelay4_DSTATE is 0 (zero-initialised, no
+  // previous edge).  Delta = |2001 − 0| = 2001 >> 40 → jerk detected →
+  // FOC disabled even though the motor just started moving normally.
+  //
+  // Set Hi = z_maxCntRst + 2 = 2002.  The maximum possible delta is 2001
+  // (Counter returns at most 2001 at saturation), so 2001 < 2002: the
+  // threshold is never reached and dz_cntTrnsDet stays permanently false.
+  // Lo = z_maxCntRst ensures that if it were ever set true it resets immediately.
+  rtP_Left.dz_cntTrnsDetHi      = (int16_T)(rtP_Left.z_maxCntRst + 2);    // was 40;  now permanently OFF
+  rtP_Left.dz_cntTrnsDetLo      = (int16_T)(rtP_Left.z_maxCntRst);        // was 20;  resets immediately if ever triggered
 
   rtP_Left.b_fieldWeakEna       = FIELD_WEAK_ENA; 
   rtP_Left.id_fieldWeakMax      = (FIELD_WEAK_MAX * A2BIT_CONV) << 4;   // fixdt(1,16,4)
@@ -280,20 +288,24 @@ void BLDC_Init(void) {
   BLDC_controller_initialize(rtM_Left);
   BLDC_controller_initialize(rtM_Right);
 
-  // Pre-seed Switch2_e to 1 (forward direction assumed).
+  // Pre-seed Switch2_e = 1 (assume forward direction before first Hall edge).
   //
-  // Switch2_e is the direction flag (±1) used by the FOC angle estimator.  It
-  // is C-default-initialised to 0 and only updated inside the Hall-edge
-  // detection block.  With Switch2_e = 0 the angle estimator takes an
-  // unintended branch that places the voltage injection 60° ahead of the rotor:
+  // Switch2_e (±1) controls which branch the FOC angle estimator takes:
+  //   Switch2_e = 0 (C default): angle = (hallPos+1) × 4096  ← 60° wrong
+  //   Switch2_e = +1 (forward):  angle =  hallPos    × 4096  ← sector start
+  //   Switch2_e = -1 (reverse):  angle = (hallPos+1) × 4096  ← sector end
   //
-  //   angle (Switch2_e=0): (hallPos+1) × 4096  ← 60° off, creates asymmetry
-  //   angle (Switch2_e=1): hallPos × 4096       ← sector start, ≤30° off
+  // Pre-seeding to 1 gives the correct sector-start angle for forward, and a
+  // sector-start angle for reverse (at most 60° off, still converges fine since
+  // the PI uses the same frame for both measurement and command — see below).
   //
-  // Pre-seeding to 1 gives the correct angle formula for forward motion from the
-  // first PWM cycle, and ≥87% torque efficiency in reverse (cos 30° = 0.87).
-  // Once the first Hall edge fires Switch2_e is updated to the true direction (±1)
-  // and the angle becomes exact for both forward and reverse.
+  // NOTE ON CONSISTENCY: the Park forward transform (current measurement) and
+  // the inverse Park (voltage command) both use the same estimated angle.
+  // Because the error is in a consistent reference frame, the current PI loop
+  // converges regardless of angle offset — only efficiency is reduced.  With
+  // ≤60° error, cos(60°)=50% of max torque is still available, which is enough
+  // to start the motor.  The first Hall edge in either direction updates
+  // Switch2_e to ±1 before FOC takes over, so the angle is exact by that point.
   rtDW_Left.Switch2_e  = 1;
   rtDW_Right.Switch2_e = 1;
 }
