@@ -53,6 +53,12 @@ extern ExtY rtY_Right;                  /* External outputs */
 
 static int16_t pwm_margin;              /* This margin allows to have a window in the PWM signal for proper FOC Phase currents measurement */
 
+/* Final applied PWM phase commands (post OPENLOOP override), captured every ISR cycle.
+ * Read by the main-loop CSV debug path.  Written in the ISR; volatile is sufficient
+ * since int16_t writes are atomic on Cortex-M3 and we tolerate at most one torn read. */
+volatile AppliedPwm3 dbg_applied_pwm_L = {0};
+volatile AppliedPwm3 dbg_applied_pwm_R = {0};
+
 extern uint8_t ctrlModReq;
 static int16_t curDC_max = (I_DC_MAX * A2BIT_CONV);
 int16_t curL_phaA = 0, curL_phaB = 0, curL_DC = 0;
@@ -288,6 +294,9 @@ void DMA1_Channel1_IRQHandler(void) {
 #endif
 
     /* Apply commands */
+    dbg_applied_pwm_L.u = ul;   /* capture final applied commands (post OPENLOOP override) */
+    dbg_applied_pwm_L.v = vl;
+    dbg_applied_pwm_L.w = wl;
     LEFT_TIM->LEFT_TIM_U    = (uint16_t)CLAMP(ul + pwm_res / 2, pwm_margin, pwm_res-pwm_margin);
     LEFT_TIM->LEFT_TIM_V    = (uint16_t)CLAMP(vl + pwm_res / 2, pwm_margin, pwm_res-pwm_margin);
     LEFT_TIM->LEFT_TIM_W    = (uint16_t)CLAMP(wl + pwm_res / 2, pwm_margin, pwm_res-pwm_margin);
@@ -389,6 +398,9 @@ void DMA1_Channel1_IRQHandler(void) {
 #endif
 
     /* Apply commands */
+    dbg_applied_pwm_R.u = ur;   /* capture final applied commands (post OPENLOOP override) */
+    dbg_applied_pwm_R.v = vr;
+    dbg_applied_pwm_R.w = wr;
     RIGHT_TIM->RIGHT_TIM_U  = (uint16_t)CLAMP(ur + pwm_res / 2, pwm_margin, pwm_res-pwm_margin);
     RIGHT_TIM->RIGHT_TIM_V  = (uint16_t)CLAMP(vr + pwm_res / 2, pwm_margin, pwm_res-pwm_margin);
     RIGHT_TIM->RIGHT_TIM_W  = (uint16_t)CLAMP(wr + pwm_res / 2, pwm_margin, pwm_res-pwm_margin);

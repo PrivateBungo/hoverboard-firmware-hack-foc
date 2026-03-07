@@ -68,6 +68,10 @@ extern DW   rtDW_Left;                  /* Observable states */
 extern DW   rtDW_Right;                 /* Observable states */
 //---------------
 
+/* Final applied PWM commands captured by bldc.c ISR (post OPENLOOP override). */
+extern volatile AppliedPwm3 dbg_applied_pwm_L;
+extern volatile AppliedPwm3 dbg_applied_pwm_R;
+
 extern uint8_t     inIdx;               // input index used for dual-inputs
 extern uint8_t     inIdx_prev;
 extern InputStruct input1[];            // input structure
@@ -517,14 +521,15 @@ int main(void) {
           //   olThL         : left  open-loop synthetic theta [0..23039]
           //   olDthL        : left  open-loop delta_theta per ISR (signed)
           //   olVL          : left  open-loop voltage amplitude
-          //   (hallR..olVR) : same set for right motor
+          //   uL,vL,wL      : left  final applied PWM phase commands (post OPENLOOP override), written to timer CCRs
+          //   (hallR..wR)   : same set for right motor
           static uint8_t csv_header_sent = 0;
           if (!csv_header_sent) {
             printf("t_ms,cmdL,cmdR,cModReq,cModActL,cModActR,focL,focR,"
                    "hallL,angL,spdL,phAL,phBL,phCL,iqL,idL,cABL,cBCL,dcL,errL,"
-                   "olPhL,olThL,olDthL,olVL,"
+                   "olPhL,olThL,olDthL,olVL,uL,vL,wL,"
                    "hallR,angR,spdR,phAR,phBR,phCR,iqR,idR,cABR,cBCR,dcR,errR,"
-                   "olPhR,olThR,olDthR,olVR\r\n");
+                   "olPhR,olThR,olDthR,olVR,uR,vR,wR\r\n");
             csv_header_sent = 1;
           }
           // Snapshot open-loop state atomically; falls back to all-zeros when OPENLOOP_ENABLE not defined.
@@ -534,9 +539,9 @@ int main(void) {
           #endif
           printf("%lu,%d,%d,%d,%d,%d,%d,%d,"
                  "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
-                 "%d,%d,%d,%d,"
+                 "%d,%d,%d,%d,%d,%d,%d,"
                  "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
-                 "%d,%d,%d,%d\r\n",
+                 "%d,%d,%d,%d,%d,%d,%d\r\n",
             (unsigned long)(main_loop_counter * DELAY_IN_MAIN_LOOP),          // t_ms
             (int)cmdL, (int)cmdR,                                              // cmdL,cmdR
             (int)rtU_Left.z_ctrlModReq,                                        // cModReq  – requested mode (same for both motors)
@@ -562,6 +567,10 @@ int main(void) {
             (int)olSnap_L.theta,        // olThL
             (int)olSnap_L.delta_theta,  // olDthL
             (int)olSnap_L.voltage,      // olVL
+            // ── Left final applied PWM (post OPENLOOP override) ──────────────
+            (int)dbg_applied_pwm_L.u,   // uL
+            (int)dbg_applied_pwm_L.v,   // vL
+            (int)dbg_applied_pwm_L.w,   // wL
             // ── Right motor ─────────────────────────────────────────────────────
             (int)(rtU_Right.b_hallA * 4 + rtU_Right.b_hallB * 2 + rtU_Right.b_hallC), // hallR
             (int)rtY_Right.a_elecAngle, // angR
@@ -579,7 +588,11 @@ int main(void) {
             (int)olSnap_R.phase,        // olPhR
             (int)olSnap_R.theta,        // olThR
             (int)olSnap_R.delta_theta,  // olDthR
-            (int)olSnap_R.voltage);     // olVR
+            (int)olSnap_R.voltage,      // olVR
+            // ── Right final applied PWM (post OPENLOOP override) ─────────────
+            (int)dbg_applied_pwm_R.u,   // uR
+            (int)dbg_applied_pwm_R.v,   // vR
+            (int)dbg_applied_pwm_R.w);  // wR
         #endif
       }
     #endif

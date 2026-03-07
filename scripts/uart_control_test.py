@@ -65,7 +65,8 @@ Protocol (little-endian, all fields 2 bytes):
           olThL         left open-loop synthetic theta [0..23039] (electrical angle units)
           olDthL        left open-loop delta_theta per ISR (signed)
           olVL          left open-loop voltage amplitude
-          (hallR..olVR) same set for right motor
+          uL,vL,wL      left final applied PWM commands written to timer CCRs (post OPENLOOP override)
+          (hallR..wR)   same set for right motor
 
 Usage:
     python3 uart_control_test.py --control_port /dev/ttyUSB0 \\
@@ -221,9 +222,9 @@ def debug_reader(ser: serial.Serial, log_path: str) -> None:
     CSV_HEADER = (
         "t_ms,cmdL,cmdR,cModReq,cModActL,cModActR,focL,focR,"
         "hallL,angL,spdL,phAL,phBL,phCL,iqL,idL,cABL,cBCL,dcL,errL,"
-        "olPhL,olThL,olDthL,olVL,"
+        "olPhL,olThL,olDthL,olVL,uL,vL,wL,"
         "hallR,angR,spdR,phAR,phBR,phCR,iqR,idR,cABR,cBCR,dcR,errR,"
-        "olPhR,olThR,olDthR,olVR"
+        "olPhR,olThR,olDthR,olVR,uR,vR,wR"
     )
     line_buf = b""
     with open(log_path, "w", buffering=1) as log_file:

@@ -379,7 +379,8 @@ The firmware prints one CSV header line at boot and one data row every 125 ms vi
 | `olThL` | `olStateL.theta` | Left open-loop **synthetic electrical angle** [0..23039]. Advances by `delta_theta` each ISR cycle during phase 2. Same units as the Simulink `plook` table. |
 | `olDthL` | `olStateL.delta_theta` | Left open-loop **angle increment per ISR** (signed; negative = reverse). Ramps from 0 to ±`OPENLOOP_DELTA_THETA_MAX` during phase 2. |
 | `olVL` | `olStateL.voltage` | Left open-loop **voltage amplitude**. Ramps from 0 to `OPENLOOP_VOLTAGE_MAX` (700) during phase 1, then held constant in phase 2. |
-| `hallR..olVR` | (same sources, right motor) | Same set of columns for the right motor. |
+| `uL,vL,wL` | `dbg_applied_pwm_L.u/v/w` | Left **final applied PWM phase commands** written to the inverter timer CCR registers, captured after all overrides (including OPENLOOP). These show what the inverter was actually commanded each cycle. During ALIGN (`olPhL=1`) these should be static (only magnitude ramps); during ROTATE (`olPhL=2`) they should evolve as 120°-shifted sinusoids across successive 125 ms snapshots. Always reflects the commanded values even when `OPENLOOP_ENABLE` is not defined. |
+| `hallR..wR` | (same sources, right motor) | Same set of columns for the right motor. |
 
 ### How to interpret `cModReq` vs `cModAct*`
 
@@ -400,6 +401,15 @@ During OPENLOOP startup (`olPhL > 0`), `focL` is 0 — the open-loop sinusoidal 
 ### How to interpret `phA*/phB*/phC*` during OPENLOOP
 
 `phAL/phBL/phCL` are the **BLDC controller's** outputs (`rtY_Left.DC_phaA/B/C`), captured **before** the OPENLOOP override in the ISR. When `olPhL > 0`, the timer registers actually receive the sinusoidal values computed from `olThL` and `olVL`. The difference between `phAL` and the actual motor drive is only visible indirectly through `cABL/cBCL`.
+
+### How to interpret `uL/vL/wL` (final applied PWM)
+
+`uL/vL/wL` are the **final phase commands** written to the inverter (captured from `dbg_applied_pwm_L` after all overrides in the ISR). They show exactly what the inverter was commanded each 16 kHz cycle, allowing analysis of whether the field vector is rotating:
+
+- During **ALIGN** (`olPhL=1`): `uL/vL/wL` should be **static** — all three values hold constant (proportional to the field-lock angle) while only magnitude increases.
+- During **ROTATE** (`olPhL=2`): `uL/vL/wL` should **evolve as 120°-shifted sinusoids** across successive 125 ms snapshots, confirming the field vector is advancing.
+- When OPENLOOP is inactive (`olPhL=0`) and FOC is active (`focL=1`): `uL/vL/wL` equal `phAL/phBL/phCL` (same BLDC controller output, no override).
+- When `OPENLOOP_ENABLE` is not defined: `uL/vL/wL` always equal `phAL/phBL/phCL`.
 
 ### OPENLOOP column units and timing
 

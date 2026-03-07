@@ -1,17 +1,16 @@
 #pragma once
 /*
- * openloop_debug.h -- Snapshot interface for OPENLOOP internal state.
+ * openloop_debug.h -- Debug interface for OPENLOOP internal state and final
+ *                     applied PWM commands.
  *
- * Provides a safe read of the bldc.c open-loop state variables into a plain
- * struct so that main.c can include them in the CSV debug stream without
- * dereferencing the static variables directly.
+ * OpenLoopSnapshot: safe read of bldc.c open-loop state variables into a
+ * plain struct.  The getter disables interrupts briefly to avoid torn reads
+ * from the 16 kHz DMA ISR.  Defined unconditionally so main.c can use a
+ * zero-initialised fallback when OPENLOOP_ENABLE is not defined.
  *
- * The getter disables interrupts briefly to avoid torn reads of the fields
- * that are updated inside the 16 kHz DMA ISR.
- *
- * OpenLoopSnapshot is always defined so that main.c can use a zero-initialised
- * fallback struct when OPENLOOP_ENABLE is not defined.  The getter function is
- * only compiled when OPENLOOP_ENABLE is defined.
+ * AppliedPwm3: final phase commands written to the inverter (ul/vl/wl after
+ * all overrides).  Defined here so the typedef is shared between bldc.c
+ * (which writes the volatile globals) and main.c (which reads them).
  */
 
 #include <stdint.h>
@@ -22,6 +21,11 @@ typedef struct {
     int16_t  delta_theta;  /* angle increment per ISR cycle [units/ISR] (signed; negative = reverse) */
     int16_t  voltage;      /* voltage amplitude [0..OPENLOOP_VOLTAGE_MAX] */
 } OpenLoopSnapshot;
+
+/* Final applied PWM phase commands captured immediately before the timer CCR
+ * writes in the ISR.  Written in the ISR, read in the main loop for CSV
+ * logging. */
+typedef struct { int16_t u, v, w; } AppliedPwm3;
 
 #ifdef OPENLOOP_ENABLE
 
