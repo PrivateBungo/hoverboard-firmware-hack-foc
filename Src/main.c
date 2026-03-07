@@ -489,19 +489,63 @@ int main(void) {
 
     // ####### DEBUG SERIAL OUT #######
     #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
-      if (main_loop_counter % 25 == 0) {    // Send data periodically every 125 ms      
+      if (main_loop_counter % 25 == 0) {    // Send data periodically every 125 ms
         #if defined(DEBUG_SERIAL_PROTOCOL)
           process_debug();
         #else
-          printf("in1:%i in2:%i cmdL:%i cmdR:%i BatADC:%i BatV:%i TempADC:%i Temp:%i \r\n",
-            input1[inIdx].raw,        // 1: INPUT1
-            input2[inIdx].raw,        // 2: INPUT2
-            cmdL,                     // 3: output command: [-1000, 1000]
-            cmdR,                     // 4: output command: [-1000, 1000]
-            adc_buffer.batt1,         // 5: for battery voltage calibration
-            batVoltageCalib,          // 6: for verifying battery voltage calibration
-            board_temp_adcFilt,       // 7: for board temperature calibration
-            board_temp_deg_c);        // 8: for verifying board temperature calibration
+          // CSV: print column header once at startup, then one data row every 125 ms.
+          // Columns:
+          //   t_ms        : approximate uptime in ms
+          //   cmdL,cmdR   : motor commands [-1000,1000]
+          //   cMod        : control mode (0=OPEN,1=VLT,2=SPD,3=TRQ)
+          //   hallL       : left  Hall sector (b_hallA*4+B*2+C, valid 1-6)
+          //   angL        : left  electrical angle (FOC estimate, fixdt units)
+          //   spdL        : left  motor speed [RPM]
+          //   phAL..phCL  : left  phase duty values (DC_phaA/B/C)
+          //   iqL,idL     : left  torque/flux frame currents (A2BIT_CONV units)
+          //   cABL,cBCL   : left  phase AB/BC currents (raw ADC bits; /50 = Amps)
+          //   dcL         : left  DC-link current (raw ADC bits)
+          //   errL        : left  error code (0=OK)
+          //   (hallR..errR): same set for right motor
+          static uint8_t csv_header_sent = 0;
+          if (!csv_header_sent) {
+            printf("t_ms,cmdL,cmdR,cMod,"
+                   "hallL,angL,spdL,phAL,phBL,phCL,iqL,idL,cABL,cBCL,dcL,errL,"
+                   "hallR,angR,spdR,phAR,phBR,phCR,iqR,idR,cABR,cBCR,dcR,errR\r\n");
+            csv_header_sent = 1;
+          }
+          printf("%lu,%d,%d,%d,"
+                 "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
+                 "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\r\n",
+            (unsigned long)(main_loop_counter * DELAY_IN_MAIN_LOOP),        // t_ms
+            (int)cmdL, (int)cmdR,                                           // cmdL,cmdR
+            (int)rtU_Left.z_ctrlModReq,                                     // cMod
+            // ── Left motor ─────────────────────────────────────────────────────
+            (int)(rtU_Left.b_hallA * 4 + rtU_Left.b_hallB * 2 + rtU_Left.b_hallC), // hallL
+            (int)rtY_Left.a_elecAngle,  // angL
+            (int)rtY_Left.n_mot,        // spdL  [RPM]
+            (int)rtY_Left.DC_phaA,      // phAL
+            (int)rtY_Left.DC_phaB,      // phBL
+            (int)rtY_Left.DC_phaC,      // phCL
+            (int)rtY_Left.iq,           // iqL
+            (int)rtY_Left.id,           // idL
+            (int)rtU_Left.i_phaAB,      // cABL
+            (int)rtU_Left.i_phaBC,      // cBCL
+            (int)rtU_Left.i_DCLink,     // dcL
+            (int)rtY_Left.z_errCode,    // errL
+            // ── Right motor ────────────────────────────────────────────────────
+            (int)(rtU_Right.b_hallA * 4 + rtU_Right.b_hallB * 2 + rtU_Right.b_hallC), // hallR
+            (int)rtY_Right.a_elecAngle, // angR
+            (int)rtY_Right.n_mot,       // spdR  [RPM]
+            (int)rtY_Right.DC_phaA,     // phAR
+            (int)rtY_Right.DC_phaB,     // phBR
+            (int)rtY_Right.DC_phaC,     // phCR
+            (int)rtY_Right.iq,          // iqR
+            (int)rtY_Right.id,          // idR
+            (int)rtU_Right.i_phaAB,     // cABR
+            (int)rtU_Right.i_phaBC,     // cBCR
+            (int)rtU_Right.i_DCLink,    // dcR
+            (int)rtY_Right.z_errCode);  // errR
         #endif
       }
     #endif
@@ -544,12 +588,12 @@ int main(void) {
     // ####### BEEP AND EMERGENCY POWEROFF #######
     if (TEMP_POWEROFF_ENABLE && board_temp_deg_c >= TEMP_POWEROFF && speedAvgAbs < 20){  // poweroff before mainboard burns OR low bat 3
       #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
-        printf("Powering off, temperature is too high\r\n");
+        printf("# Powering off: temperature too high\r\n");
       #endif
       poweroff();
     } else if ( BAT_DEAD_ENABLE && batVoltage < BAT_DEAD && speedAvgAbs < 20){
       #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
-        printf("Powering off, battery voltage is too low\r\n");
+        printf("# Powering off: battery voltage too low\r\n");
       #endif
       poweroff();
     } else if (rtY_Left.z_errCode || rtY_Right.z_errCode) {                                           // 1 beep (low pitch): Motor error, disable motors
@@ -592,7 +636,7 @@ int main(void) {
 
     if (inactivity_timeout_counter > (INACTIVITY_TIMEOUT * 60 * 1000) / (DELAY_IN_MAIN_LOOP + 1)) {  // rest of main loop needs maybe 1ms
       #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
-        printf("Powering off, wheels were inactive for too long\r\n");
+        printf("# Powering off: wheels inactive too long\r\n");
       #endif
       poweroff();
     }
