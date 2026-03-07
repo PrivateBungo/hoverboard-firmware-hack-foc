@@ -156,14 +156,34 @@
 #define I_DC_MAX        15              // [A] Maximum stage2 DC Link current limit for Commutation and Sinusoidal types (This is the final current protection. Above this value, current chopping is applied. To avoid this make sure that I_DC_MAX = I_MOT_MAX + 2A)
 #define N_MOT_MAX       550             // [rpm] Maximum motor speed limit
 #define MOTOR_CTRL_STANDSTILL_GATE_RPM  10  // [rpm] Speed threshold below which the standstill protection gates the motor (prevents Hall-quantization-induced torque bursts at near-standstill)
-// FOC startup: the controller normally switches to 6-step block commutation below
-// n_commDeacvHi (default 30 rpm) and only re-enables sinusoidal FOC above that
-// threshold, causing cogging and a "blocked" feel at low speeds.  Setting both
-// thresholds to 0 keeps the FOC relay permanently ON so sinusoidal FOC is used
-// from the very first PWM cycle.  The jerk-detector (dz_cntTrnsDet) is also
-// disabled in BLDC_Init() because its default threshold (40 counts) fires on the
-// first hall transition from standstill and would revert to block commutation.
-#define MOTOR_CTRL_FOC_COMM_ACT_RPM     0   // [rpm] Speed above which FOC/SIN method activates (relay ON; default firmware: 30 rpm)
+// FOC startup commutation control.
+//
+// At exactly zero speed the direction state Switch2_e is uninitialized (= 0),
+// which causes the FOC angle estimator to place the injection 60° ahead of the
+// actual Hall sector.  The resulting torque is 50–87% of optimal and can fight
+// the rotor on some positions — causing "blocked at standstill".
+//
+// 6-step (COM_Method) bypasses the angle estimator entirely and uses the raw
+// Hall-sector look-up table, so it always applies force in the correct direction.
+//
+// Strategy:
+//   • Keep 6-step at exact standstill (Abs5 = 0, Switch2_e not yet set).
+//   • Switch to FOC as soon as the first Hall edge fires.  At that point
+//     Switch2_e is set to ±1 AND Abs5 jumps to ~5 rpm (seeded from z_maxCntRst),
+//     which exceeds any reasonable ACT_RPM threshold.
+//   • The jerk-detector (dz_cntTrnsDet) is disabled in BLDC_Init() so the
+//     startup-transient large Δperiod can never revert back to 6-step above
+//     ACT_RPM.
+//
+// MOTOR_CTRL_FOC_COMM_ACT_RPM = 1  →  n_commDeacvHi = 16 (fixdt).
+//   Relay stays OFF while Abs5 = 0 (standstill) → 6-step.
+//   Relay flips ON once Abs5 ≥ 16 → FOC.  The very first Hall edge from
+//   standstill produces Abs5 ≈ 85 (≈5 rpm) from the initial z_maxCntRst
+//   seed, so FOC activates immediately on first movement.
+// MOTOR_CTRL_FOC_COMM_DEACT_RPM = 0  →  n_commAcvLo = 0.
+//   FOC only deactivates at Abs5 = 0 (true standstill again) — tight
+//   hysteresis, prevents any oscillation while rolling.
+#define MOTOR_CTRL_FOC_COMM_ACT_RPM     1   // [rpm] Speed above which FOC/SIN method activates (relay ON; default firmware: 30 rpm)
 #define MOTOR_CTRL_FOC_COMM_DEACT_RPM   0   // [rpm] Speed below which FOC/SIN method deactivates (relay OFF; default firmware: 15 rpm)
 
 // Field Weakening / Phase Advance

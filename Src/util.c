@@ -239,13 +239,28 @@ void BLDC_Init(void) {
   rtP_Left.n_max                = N_MOT_MAX << 4;                         // fixdt(1,16,4)
   rtP_Left.n_stdStillDet        = MOTOR_CTRL_STANDSTILL_GATE_RPM << 4;    // fixdt(1,16,4)
 
-  // Keep sinusoidal FOC active at all speeds.  The default firmware switches to
-  // coarse 6-step block commutation below 30 rpm (n_commDeacvHi=480), which
-  // produces dead-zone cogging that blocks the motor at startup.  Setting both
-  // thresholds to 0 means |speed|>=0 is always true → relay stays permanently ON.
+  // FOC vs 6-step commutation gate.
+  // The relay n_commDeacv controls whether FOC_Method or COM_Method (6-step) is used:
+  //   relay ON  (n_commDeacv_Mode=true):  FOC active
+  //   relay OFF (n_commDeacv_Mode=false): 6-step block commutation
+  //
+  // At cold start, the direction state Switch2_e is uninitialised (= 0).  When
+  // the FOC angle estimator runs with Switch2_e=0 it places the injection one
+  // full sector (60°) ahead of the actual rotor position.  The resulting torque
+  // is only 50–87% of optimal and can produce an opposing force on some positions.
+  // 6-step (COM_Method) is immune to this: it uses the raw Hall look-up table and
+  // always commutates in the correct direction.
+  //
+  // With n_commDeacvHi=16 (1 rpm in fixdt(1,16,4)):
+  //   Abs5=0 (standstill, no Hall edges) → relay OFF → 6-step → full torque ✓
+  //   First Hall edge → Switch2_e set to ±1, Abs5 jumps to ~85 (≈5 rpm, seeded
+  //   from z_maxCntRst=2000) → relay ON → FOC with correct angle ✓
+  // With n_commAcvLo=0:
+  //   FOC only deactivates back to standstill (Abs5=0), not while rolling.
+  //
   // NOTE: confusing naming convention in the Simulink model:
-  //   n_commDeacvHi = "commutation DEactivation HIGH threshold" → relay turns ON  (FOC activates)   when |speed| >= n_commDeacvHi
-  //   n_commAcvLo   = "commutation ACTivation   LOW  threshold" → relay turns OFF (FOC deactivates) when |speed| <= n_commAcvLo
+  //   n_commDeacvHi = "commutation DEactivation HIGH" → relay turns ON  (FOC) when |speed| >= n_commDeacvHi
+  //   n_commAcvLo   = "commutation ACTivation   LOW"  → relay turns OFF (6-step) when |speed| <= n_commAcvLo
   rtP_Left.n_commDeacvHi        = MOTOR_CTRL_FOC_COMM_ACT_RPM << 4;       // fixdt(1,16,4): FOC activates   when |speed| >= this (was 480 = 30 rpm)
   rtP_Left.n_commAcvLo          = MOTOR_CTRL_FOC_COMM_DEACT_RPM << 4;     // fixdt(1,16,4): FOC deactivates when |speed| <= this (was 240 = 15 rpm)
 
