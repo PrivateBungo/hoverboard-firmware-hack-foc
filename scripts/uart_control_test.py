@@ -2,27 +2,35 @@
 """
 uart_control_test.py -- Linux/Mac host test script for hoverboard-firmware-hack-FOC
 ===================================================================================
-Sends SerialCommand frames to the hoverboard over a UART-USB adapter and
-optionally decodes the SerialFeedback frames that the board transmits back.
+Sends SerialCommand frames to the hoverboard over one UART-USB adapter (control
+port) and optionally captures the CSV debug stream from a second adapter (debug
+port) into a timestamped log file.
 
 Firmware configuration required (Inc/config.h, VARIANT_USART):
     #define CONTROL_SERIAL_USART2  0    // enable binary command input on LEFT cable
     #define FEEDBACK_SERIAL_USART2      // enable binary feedback output on LEFT cable
+    #define DEBUG_SERIAL_USART3         // enable CSV debug output on RIGHT cable
     // DEBUG_SERIAL_USART2 must be disabled (conflicts with FEEDBACK_SERIAL_USART2)
 
-Wire-up (LEFT sensor cable, 3.3 V logic only – NOT 5 V tolerant!):
-    GND  → GND of USB-UART adapter
-    TX2  → RX of USB-UART adapter
-    RX2  → TX of USB-UART adapter
+Wire-up:
+    Control port (LEFT sensor cable, USART2 – 3.3 V logic only, NOT 5 V tolerant):
+        GND  → GND of USB-UART adapter
+        TX2  → RX of USB-UART adapter
+        RX2  → TX of USB-UART adapter
+
+    Debug port (RIGHT sensor cable, USART3 – 3.3 V logic only):
+        GND  → GND of second USB-UART adapter
+        TX3  → RX of USB-UART adapter
+        (RX3 is TX-only in debug mode; nothing to connect)
 
 Protocol (little-endian, all fields 2 bytes):
-    SerialCommand  (host → board):
+    SerialCommand  (host → board, via control port):
         uint16  start      = 0xABCD
         int16   steer      steering command  [-1000, 1000]
         int16   speed      speed   command  [-1000, 1000]
         uint16  checksum   = start ^ steer ^ speed  (XOR, treating int16 as uint16)
 
-    SerialFeedback (board → host, sent every ~10 ms):
+    SerialFeedback (board → host, sent every ~10 ms, via control port):
         uint16  start      = 0xABCD
         int16   cmd1       echoed steer command
         int16   cmd2       echoed speed command
@@ -33,17 +41,40 @@ Protocol (little-endian, all fields 2 bytes):
         uint16  cmdLed       LED command flags
         uint16  checksum     XOR of all preceding fields
 
-Usage:
-    python3 uart_control_test.py [--port /dev/ttyUSB0] [--speed 100] [--steer 0]
+    CSV debug stream (board → host, sent every 125 ms, via debug port):
+        One header row (column names), then data rows.
+        Lines starting with '#' are diagnostic comments and can be ignored.
+        Columns:
+          t_ms        uptime in ms
+          cmdL,cmdR   motor commands [-1000,1000]
+          cMod        control mode (0=OPEN,1=VLT,2=SPD,3=TRQ)
+          hallL       left Hall sector (1-6; 0/7 = fault)
+          angL        left electrical angle (FOC estimate, fixdt units)
+          spdL        left speed [RPM]
+          phAL..phCL  left phase duty values
+          iqL,idL     left torque/flux currents (raw; divide by 50 for Amps)
+          cABL,cBCL   left phase AB/BC currents (raw ADC; divide by 50 for Amps)
+          dcL         left DC-link current (raw ADC)
+          errL        left error code (0=OK)
+          (hallR..errR)  same set for right motor
 
-    --port   Serial device (default: /dev/ttyUSB0)
-    --speed  Fixed speed command to hold after ramp  (default: 0 = safe bench test)
-    --steer  Fixed steer command to hold             (default: 0)
+Usage:
+    python3 uart_control_test.py --control_port /dev/ttyUSB0 \\
+                                  --debug_port   /dev/ttyUSB1 \\
+                                  --speed 100 --steering 0
+
+    --control_port  Serial device for control+feedback (default: /dev/ttyUSB0)
+    --debug_port    Serial device for CSV debug output (optional).
+                    When given, all debug lines are appended to a new
+                    debug_YYYYMMDD_HHMMSS.csv file in the current directory.
+    --speed         Fixed speed command to hold after ramp  (default: 0)
+    --steering      Fixed steering command to hold          (default: 0)
 
 Press Ctrl+C to stop and send speed=0 before exiting.
 """
 
 import argparse
+import datetime
 import struct
 import threading
 import time
@@ -112,13 +143,13 @@ def parse_feedback(buf: bytes):
     }
 
 
-# ── Feedback reader thread ────────────────────────────────────────────────────
+# ── Feedback reader thread (control port) ────────────────────────────────────
 _stop_event = threading.Event()
 _rx_buf = bytearray()
 
 
 def feedback_reader(ser: serial.Serial) -> None:
-    """Background thread: read bytes, find 0xABCD, decode full frames."""
+    """Background thread: read bytes from control port, decode SerialFeedback frames."""
     global _rx_buf
     while not _stop_event.is_set():
         try:
@@ -164,37 +195,94 @@ def feedback_reader(ser: serial.Serial) -> None:
                 _rx_buf = _rx_buf[1:]
 
 
+# ── Debug reader thread (debug port) ─────────────────────────────────────────
+def debug_reader(ser: serial.Serial, log_path: str) -> None:
+    """
+    Background thread: read ASCII lines from the debug port (USART3) and write
+    them to *log_path*.  Lines starting with '#' are diagnostic comments and are
+    also printed to stdout so they are visible during a live run.
+    """
+    line_buf = b""
+    with open(log_path, "w", buffering=1) as log_file:
+        print(f"[DBG] Logging CSV debug output to: {log_path}", flush=True)
+        while not _stop_event.is_set():
+            try:
+                chunk = ser.read(ser.in_waiting or 1)
+            except serial.SerialException:
+                break
+            if not chunk:
+                continue
+            line_buf += chunk
+            while b"\n" in line_buf:
+                line, line_buf = line_buf.split(b"\n", 1)
+                decoded = line.rstrip(b"\r").decode("ascii", errors="replace")
+                log_file.write(decoded + "\n")
+                # Echo comment lines and the header to stdout for visibility
+                if decoded.startswith("#") or decoded.startswith("t_ms"):
+                    print(f"[DBG] {decoded}", flush=True)
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Hoverboard UART control+feedback test (VARIANT_USART / USART2)"
+        description="Hoverboard UART control+feedback test with optional CSV debug capture"
     )
-    parser.add_argument("--port",  default="/dev/ttyUSB0", help="Serial device")
+    parser.add_argument(
+        "--control_port", default="/dev/ttyUSB0",
+        help="Serial device for control+feedback / USART2 (default: /dev/ttyUSB0)",
+    )
+    parser.add_argument(
+        "--debug_port", default=None,
+        help="Serial device for CSV debug output / USART3 (optional). "
+             "When given, output is saved to debug_YYYYMMDD_HHMMSS.csv",
+    )
     parser.add_argument("--speed", type=int, default=0,
                         help="Target speed command [-1000, 1000] (default 0)")
-    parser.add_argument("--steer", type=int, default=0,
-                        help="Steer command       [-1000, 1000] (default 0)")
+    parser.add_argument("--steering", type=int, default=0,
+                        help="Steering command [-1000, 1000] (default 0)")
+    parser.add_argument("--steer", type=int, default=None,
+                        help="Alias for --steering (deprecated; use --steering)")
     args = parser.parse_args()
 
     target_speed = max(-1000, min(1000, args.speed))
-    target_steer = max(-1000, min(1000, args.steer))
+    # --steer is kept as a deprecated alias; --steering takes precedence when both given
+    steering_val = args.steer if (args.steer is not None and args.steering == 0) else args.steering
+    target_steer = max(-1000, min(1000, steering_val))
 
-    print(f"Opening {args.port} at {BAUD_RATE} baud (8N1)…")
+    # ── Open control port ─────────────────────────────────────────────────────
+    print(f"Opening control port {args.control_port} at {BAUD_RATE} baud (8N1)…")
     try:
-        ser = serial.Serial(args.port, BAUD_RATE, timeout=0.05)
+        ctrl_ser = serial.Serial(args.control_port, BAUD_RATE, timeout=0.05)
     except serial.SerialException as exc:
-        sys.exit(f"Cannot open serial port: {exc}")
+        sys.exit(f"Cannot open control port: {exc}")
 
     print(
         "Connected. Starting with speed=0, steer=0.\n"
-        f"Ramping toward speed={target_speed}, steer={target_steer}.\n"
+        f"Ramping toward speed={target_speed}, steering={target_steer}.\n"
         "Press Ctrl+C to stop safely.\n"
     )
 
-    # Start background reader
-    reader = threading.Thread(target=feedback_reader, args=(ser,), daemon=True)
+    # ── Start feedback reader on control port ─────────────────────────────────
+    reader = threading.Thread(target=feedback_reader, args=(ctrl_ser,), daemon=True)
     reader.start()
 
+    # ── Open debug port if requested ──────────────────────────────────────────
+    debug_ser = None
+    if args.debug_port:
+        print(f"Opening debug port  {args.debug_port} at {BAUD_RATE} baud (8N1)…")
+        try:
+            debug_ser = serial.Serial(args.debug_port, BAUD_RATE, timeout=0.05)
+        except serial.SerialException as exc:
+            sys.exit(f"Cannot open debug port: {exc}")
+
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_path = f"debug_{timestamp}.csv"
+        dbg_reader = threading.Thread(
+            target=debug_reader, args=(debug_ser, log_path), daemon=True
+        )
+        dbg_reader.start()
+
+    # ── Main control loop ─────────────────────────────────────────────────────
     current_speed = 0
     try:
         while True:
@@ -205,7 +293,7 @@ def main() -> None:
                 current_speed = max(current_speed - RAMP_STEP, target_speed)
 
             frame = build_command(target_steer, current_speed)
-            ser.write(frame)
+            ctrl_ser.write(frame)
             print(
                 f"[TX] steer={target_steer:5d}  speed={current_speed:5d}",
                 flush=True,
@@ -218,10 +306,12 @@ def main() -> None:
         _stop_event.set()
         # Send a few zero-speed frames before closing
         for _ in range(5):
-            ser.write(build_command(0, 0))
+            ctrl_ser.write(build_command(0, 0))
             time.sleep(0.05)
-        ser.close()
-        print("Port closed. Goodbye.")
+        ctrl_ser.close()
+        if debug_ser is not None:
+            debug_ser.close()
+        print("Port(s) closed. Goodbye.")
 
 
 if __name__ == "__main__":
