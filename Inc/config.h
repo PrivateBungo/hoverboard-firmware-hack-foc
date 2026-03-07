@@ -154,7 +154,50 @@
 // Limitation settings
 #define I_MOT_MAX       13              // [A] Maximum single motor current limit
 #define I_DC_MAX        15              // [A] Maximum stage2 DC Link current limit for Commutation and Sinusoidal types (This is the final current protection. Above this value, current chopping is applied. To avoid this make sure that I_DC_MAX = I_MOT_MAX + 2A)
-#define N_MOT_MAX       150             // [rpm] Maximum motor speed limit
+#define N_MOT_MAX       550             // [rpm] Maximum motor speed limit
+// FOC startup commutation control.
+//
+// The firmware uses two commutation methods and switches between them:
+//   COM_Method (6-step): Hall position → lookup table → directly drives phases.
+//                        Works reliably at any speed, no angle estimate needed.
+//   FOC_Method:          Park/Clarke transforms with estimated electrical angle.
+//                        More efficient but requires a reliable angle estimate.
+//
+// The relay n_commDeacv selects the method based on measured speed (Abs5):
+//   Abs5 >= n_commDeacvHi  →  FOC active
+//   Abs5 <= n_commAcvLo    →  6-step active
+//
+// STARTUP SEQUENCE (both forward and reverse):
+//   Cold start (no Hall edges yet): Abs5 = 0 → 6-step is used.  COM_Method
+//   energises the correct phases for the current Hall sector × the sign of the
+//   torque request, so the motor starts turning in the right direction.
+//   First Hall edge: Switch2_e is set to ±1 (direction detected).  The
+//   speed estimator seeds the period from z_maxCntRst.
+//   Subsequent edges: speed builds up; once Abs5 ≥ n_commDeacvHi → FOC
+//   activates with the now-correct Switch2_e angle.
+//
+// SWITCH2_E PRE-SEED (applied in BLDC_Init, see Src/util.c):
+//   Switch2_e C-default-initialises to 0, giving the wrong angle branch.
+//   It is pre-seeded to 1 so that for forward motion the correct angle
+//   (hallPos × 4096) is used from the very first FOC step.  For reverse,
+//   Switch2_e is updated to −1 on the first Hall edge before FOC activates.
+//
+// n_commDeacvHi = ACT_RPM × 16  (fixdt(1,16,4)):
+//   Set to 1 rpm (= 16) so 6-step is used only at absolute standstill.
+//   The first Hall edge seeds a speed of ~5 rpm from z_maxCntRst, which
+//   immediately exceeds the 1 rpm threshold → FOC takes over after
+//   one Hall sector of 6-step bootstrapping.
+#define MOTOR_CTRL_FOC_COMM_ACT_RPM     1   // [rpm] Speed above which FOC/SIN method activates (relay ON; original firmware: 30 rpm)
+#define MOTOR_CTRL_FOC_COMM_DEACT_RPM   0   // [rpm] Speed below which FOC/SIN method deactivates (relay OFF; original firmware: 15 rpm)
+
+// Stall detection speed gate.
+// The diagnostics block triggers a fault (→ OPEN_MODE) when the motor output
+// exceeds r_errInpTgtThres while Abs5 < n_stdStillDet for longer than t_errQual
+// cycles.  Setting this to 0 disables the speed-gate entirely (Abs5 < 0 is
+// never true), preventing false triggers during the startup window where the
+// speed estimate is momentarily 0 after the first Hall edge in reverse.
+// Hall-sensor stuck detection (invalid states 0b000 and 0b111) remains active.
+#define MOTOR_CTRL_STANDSTILL_GATE_RPM  0   // [rpm] 0 = disabled; >0 triggers stall fault if speed < threshold at high output
 
 // Field Weakening / Phase Advance
 #define FIELD_WEAK_ENA  0               // [-] Field Weakening / Phase Advance enable flag: 0 = Disabled (default), 1 = Enabled
