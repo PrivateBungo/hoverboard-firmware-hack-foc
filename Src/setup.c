@@ -88,19 +88,26 @@ void UART3_Init(void)
   __HAL_RCC_DMA1_CLK_ENABLE();
 
   /* DMA interrupt init */
-  /* DMA1_Channel2_IRQn interrupt configuration */
+  /* DMA1_Channel2_IRQn interrupt configuration (USART3_TX DMA) */
   HAL_NVIC_SetPriority(DMA1_Channel2_IRQn, 1, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel2_IRQn);
-  /* DMA1_Channel3_IRQn interrupt configuration */
+  /* DMA1_Channel3_IRQn interrupt configuration (USART3_RX DMA - only needed when receiving) */
+  #if defined(CONTROL_SERIAL_USART3) || defined(SIDEBOARD_SERIAL_USART3)
   HAL_NVIC_SetPriority(DMA1_Channel3_IRQn, 1, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel3_IRQn);
-  
+  #endif
+
   huart3.Instance = USART3;
   huart3.Init.BaudRate = USART3_BAUD;
   huart3.Init.WordLength = USART3_WORDLENGTH;
   huart3.Init.StopBits = UART_STOPBITS_1;
   huart3.Init.Parity = UART_PARITY_NONE;
+  /* TX-only when debug output is the only function; TX_RX when receiving is needed */
+  #if defined(CONTROL_SERIAL_USART3) || defined(SIDEBOARD_SERIAL_USART3)
   huart3.Init.Mode = UART_MODE_TX_RX;
+  #else
+  huart3.Init.Mode = UART_MODE_TX;
+  #endif
   huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
   huart3.Init.OverSampling = UART_OVERSAMPLING_16;
   HAL_UART_Init(&huart3);
@@ -178,20 +185,23 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
     __HAL_RCC_GPIOB_CLK_ENABLE();
     /**USART3 GPIO Configuration    
     PB10     ------> USART3_TX
-    PB11     ------> USART3_RX 
+    PB11     ------> USART3_RX (only configured when receiving)
     */
     GPIO_InitStruct.Pin = GPIO_PIN_10;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
+    #if defined(CONTROL_SERIAL_USART3) || defined(SIDEBOARD_SERIAL_USART3)
     GPIO_InitStruct.Pin = GPIO_PIN_11;
     GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
     GPIO_InitStruct.Pull = GPIO_PULLUP;
     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+    #endif
 
     /* USART3 DMA Init */
-    /* USART3_RX Init */
+    #if defined(CONTROL_SERIAL_USART3) || defined(SIDEBOARD_SERIAL_USART3)
+    /* USART3_RX Init - only when receiving */
     hdma_usart3_rx.Instance = DMA1_Channel3;
     hdma_usart3_rx.Init.Direction = DMA_PERIPH_TO_MEMORY;
     hdma_usart3_rx.Init.PeriphInc = DMA_PINC_DISABLE;
@@ -202,6 +212,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
     hdma_usart3_rx.Init.Priority = DMA_PRIORITY_LOW;
     HAL_DMA_Init(&hdma_usart3_rx);
     __HAL_LINKDMA(uartHandle,hdmarx,hdma_usart3_rx);
+    #endif
 
     /* USART3_TX Init */
     hdma_usart3_tx.Instance = DMA1_Channel2;
@@ -219,7 +230,10 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
     HAL_NVIC_SetPriority(USART3_IRQn, 1, 0);
     HAL_NVIC_EnableIRQ(USART3_IRQn);
   /* USER CODE BEGIN USART3_MspInit 1 */
-	__HAL_UART_ENABLE_IT (uartHandle, UART_IT_IDLE);  // Enable the USART IDLE line detection interrupt
+    /* IDLE line detection interrupt - only needed when receiving via DMA */
+    #if defined(CONTROL_SERIAL_USART3) || defined(SIDEBOARD_SERIAL_USART3)
+    __HAL_UART_ENABLE_IT (uartHandle, UART_IT_IDLE);  // Enable the USART IDLE line detection interrupt
+    #endif
   /* USER CODE END USART3_MspInit 1 */
   }
 }
