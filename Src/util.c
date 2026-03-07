@@ -243,6 +243,20 @@ void BLDC_Init(void) {
   rtP_Left.r_fieldWeakHi        = FIELD_WEAK_HI << 4;                   // fixdt(1,16,4)
   rtP_Left.r_fieldWeakLo        = FIELD_WEAK_LO << 4;                   // fixdt(1,16,4)
 
+  // FOC startup overrides (default values in BLDC_controller_data.c are too conservative)
+  // Disable standstill detection latch: with n_stdStillDet=0, Abs5 < 0 is never true so
+  // errCode bit2 (=4) cannot latch even when the motor is stalled and PI winds up.
+  rtP_Left.n_stdStillDet        = 0;
+  // Lower FOC activation / 6-step deactivation thresholds so FOC engages almost immediately
+  // (defaults: n_commDeacvHi=480=30rpm, n_commAcvLo=240=15rpm).
+  rtP_Left.n_commDeacvHi        = 2 << 4;                               // fixdt(1,16,4): FOC activates at 2 rpm
+  rtP_Left.n_commAcvLo          = 1 << 4;                               // fixdt(1,16,4): 6-step reactivates at 1 rpm
+  // Disable the transition-detection relay by setting its HI threshold above the counter
+  // saturation value (z_maxCntRst=2000, Counter() saturates at z_maxCntRst+1=2001, so +2
+  // ensures the relay never opens and never blocks FOC).
+  // Using z_maxCntRst+2 rather than a hard-coded 2002 makes the relationship explicit.
+  rtP_Left.dz_cntTrnsDetHi      = rtP_Left.z_maxCntRst + 2;            // effectively disables transition-detection
+
   rtP_Right                     = rtP_Left;     // Copy the Left motor parameters to the Right motor parameters
   rtP_Right.z_selPhaCurMeasABC  = 1;            // Right motor measured current phases {Blue, Yellow} = {iB, iC} -> do NOT change
 
@@ -261,6 +275,12 @@ void BLDC_Init(void) {
   /* Initialize BLDC controllers */
   BLDC_controller_initialize(rtM_Left);
   BLDC_controller_initialize(rtM_Right);
+
+  // Pre-seed the direction estimator state.  The C zero-init leaves Switch2_e=0 which
+  // causes the angle estimator to use hallPos+1 (60° off) on the first Hall edge.
+  // Setting it to 1 gives the correct angle = hallPos from the very first edge.
+  rtDW_Left.Switch2_e  = 1;
+  rtDW_Right.Switch2_e = 1;
 }
 
 void Input_Lim_Init(void) {     // Input Limitations - ! Do NOT touch !

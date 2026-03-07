@@ -505,7 +505,7 @@ int main(void) {
           //   iqL,idL     : left  torque/flux frame currents (A2BIT_CONV units)
           //   cABL,cBCL   : left  phase AB/BC currents (raw ADC bits; /50 = Amps)
           //   dcL         : left  DC-link current (raw ADC bits)
-          //   errL        : left  error code (0=OK)
+          //   errL        : left  error code bitmask (0=OK, bit0=Hall-000, bit1=Hall-111, bit2=standstill-latch)
           //   (hallR..errR): same set for right motor
           static uint8_t csv_header_sent = 0;
           if (!csv_header_sent) {

@@ -154,7 +154,7 @@
 // Limitation settings
 #define I_MOT_MAX       13              // [A] Maximum single motor current limit
 #define I_DC_MAX        15              // [A] Maximum stage2 DC Link current limit for Commutation and Sinusoidal types (This is the final current protection. Above this value, current chopping is applied. To avoid this make sure that I_DC_MAX = I_MOT_MAX + 2A)
-#define N_MOT_MAX       150             // [rpm] Maximum motor speed limit
+#define N_MOT_MAX       550             // [rpm] Maximum motor speed limit (raised from 150: typical hoverboard wheel needs ~400 rpm at 15 km/h; 550 gives headroom without stressing the FETs)
 
 // Field Weakening / Phase Advance
 #define FIELD_WEAK_ENA  0               // [-] Field Weakening / Phase Advance enable flag: 0 = Disabled (default), 1 = Enabled
@@ -345,7 +345,8 @@
     #define DEBUG_SERIAL_USART3         // right sensor board cable debug output (USART2 is used for feedback/control)
   #endif
 
-  // #define TANK_STEERING              // use for tank steering, each input controls each wheel 
+  // #define TANK_STEERING              // use for tank steering, each input controls each wheel
+  #define INVERT_L_DIRECTION            // Left motor goes backward with +cmd (data-confirmed); flip it
   // #define SUPPORT_BUTTONS_LEFT       // use left sensor board cable for button inputs.  Disable DEBUG_SERIAL_USART2!
   // #define SUPPORT_BUTTONS_RIGHT      // use right sensor board cable for button inputs. Disable DEBUG_SERIAL_USART3!
 #endif
