@@ -265,7 +265,9 @@ void BLDC_Init(void) {
 
   /* Pre-seed forward direction so the angle estimator starts with the correct
    * 0° offset instead of the +60° offset that results from the C-default
-   * Switch2_e = 0.  The first real Hall edge will overwrite this value. */
+   * Switch2_e = 0.  The first real Hall edge will overwrite this with the
+   * actual direction.  At low speed, 6-step commutation is used which does
+   * not depend on Switch2_e, so reverse startup is unaffected. */
   rtDW_Left.Switch2_e  = 1;
   rtDW_Right.Switch2_e = 1;
 }
