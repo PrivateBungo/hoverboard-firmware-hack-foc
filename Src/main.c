@@ -528,12 +528,9 @@ int main(void) {
             csv_header_sent = 1;
           }
           // Snapshot open-loop state atomically; falls back to all-zeros when OPENLOOP_ENABLE not defined.
-          #ifdef OPENLOOP_ENABLE
           OpenLoopSnapshot olSnap_L = {0}, olSnap_R = {0};
+          #ifdef OPENLOOP_ENABLE
           openloop_get_snapshot(&olSnap_L, &olSnap_R);
-          #else
-          const int olPh_L = 0, olTh_L = 0, olDth_L = 0, olV_L = 0;
-          const int olPh_R = 0, olTh_R = 0, olDth_R = 0, olV_R = 0;
           #endif
           printf("%lu,%d,%d,%d,%d,%d,%d,%d,"
                  "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
@@ -561,14 +558,10 @@ int main(void) {
             (int)rtU_Left.i_DCLink,     // dcL
             (int)rtY_Left.z_errCode,    // errL
             // ── Left open-loop state (zeros when OPENLOOP_ENABLE not defined) ──
-            #ifdef OPENLOOP_ENABLE
             (int)olSnap_L.phase,        // olPhL
             (int)olSnap_L.theta,        // olThL
             (int)olSnap_L.delta_theta,  // olDthL
             (int)olSnap_L.voltage,      // olVL
-            #else
-            olPh_L, olTh_L, olDth_L, olV_L,
-            #endif
             // ── Right motor ─────────────────────────────────────────────────────
             (int)(rtU_Right.b_hallA * 4 + rtU_Right.b_hallB * 2 + rtU_Right.b_hallC), // hallR
             (int)rtY_Right.a_elecAngle, // angR
@@ -583,14 +576,10 @@ int main(void) {
             (int)rtU_Right.i_DCLink,    // dcR
             (int)rtY_Right.z_errCode,   // errR
             // ── Right open-loop state (zeros when OPENLOOP_ENABLE not defined) ─
-            #ifdef OPENLOOP_ENABLE
             (int)olSnap_R.phase,        // olPhR
             (int)olSnap_R.theta,        // olThR
             (int)olSnap_R.delta_theta,  // olDthR
             (int)olSnap_R.voltage);     // olVR
-            #else
-            olPh_R, olTh_R, olDth_R, olV_R);
-            #endif
         #endif
       }
     #endif
