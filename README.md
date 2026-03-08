@@ -76,6 +76,22 @@ In this firmware 3 control types are available, it can be set in config.h file v
 
 In all FOC control modes, the controller features maximum motor speed and maximum motor current protection. This brings great advantages to fulfil the needs of many robotic applications while maintaining safe operation.
 
+### Low-speed Hall angle quantization (standstill torque improvement)
+
+At low electrical speed, when Hall-edge interpolation is unavailable, the electrical angle estimator now quantizes to the **center of the active Hall sector** instead of the sector start.
+
+- Legacy fallback: `angle = sector * 60°` (sector edge)
+- Updated fallback: `angle = sector * 60° + 30°` (sector center)
+
+In fixed-point internal units this corresponds to:
+
+- Legacy: `angle = sector * 4096`
+- Updated: `angle = sector * 4096 + 2048`
+
+This change improves standstill and very-low-speed torque robustness by avoiding a direction-dependent sector-edge fallback angle, while keeping the high-speed Hall interpolation branch unchanged.
+
+The behavior aligns with common sensor-based FOC practice as used in vendor reference stacks (e.g., TI C2000/InstaSPIN-style examples, ST Motor Control SDK examples, and Microchip sensored FOC references), where mid-sector placement is commonly used when only coarse Hall position is available.
+
 
 ### Field Weakening / Phase Advance
 

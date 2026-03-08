@@ -1333,22 +1333,22 @@ void BLDC_controller_step(RT_MODEL *const rtM)
       rtb_Merge_m = (int16_T)(((int16_T)((int16_T)((rtb_Merge_m << 14) /
         rtDW->z_counterRawPrev) * rtDW->Switch2_e) + (rtb_Sum2_h << 14)) >> 2);
     } else {
-      if (rtDW->Switch2_e == 1) {
-        /* Switch: '<S14>/Switch3' incorporates:
-         *  Constant: '<S11>/vec_hallToPos'
-         *  Selector: '<S11>/Selector'
-         */
-        rtb_Sum2_h = rtConstP.vec_hallToPos_Value[Sum];
-      } else {
-        /* Switch: '<S14>/Switch3' incorporates:
-         *  Constant: '<S11>/vec_hallToPos'
-         *  Selector: '<S11>/Selector'
-         *  Sum: '<S14>/Sum1'
-         */
-        rtb_Sum2_h = (int8_T)(rtConstP.vec_hallToPos_Value[Sum] + 1);
-      }
-
-      rtb_Merge_m = (int16_T)(rtb_Sum2_h << 12);
+      /* No Hall-edge interpolation available (low speed / standstill).
+       *
+       * Legacy behavior quantized to the start of the Hall sector using:
+       *   angle = sector * 4096
+       * and for reverse direction used (sector + 1), effectively selecting
+       * the opposite sector edge.
+       *
+       * FOC torque production at standstill is improved by quantizing to the
+       * Hall-sector center instead:
+       *   angle = sector * 4096 + 2048
+       * This keeps a robust electrical offset across the full Hall sector and
+       * avoids direction-dependent sector-edge selection in this low-speed
+       * fallback path. Torque direction remains controlled by Iq sign.
+       */
+      rtb_Sum2_h = rtConstP.vec_hallToPos_Value[Sum];
+      rtb_Merge_m = (int16_T)(((int16_T)rtb_Sum2_h << 12) + 2048);
     }
 
     /* End of Switch: '<S14>/Switch2' */
