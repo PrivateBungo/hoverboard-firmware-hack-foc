@@ -178,8 +178,9 @@ static uint16_t rate = RATE; // Adjustable rate to support multiple drive modes 
 #define HARD_STALL_PAUSE_MS          5000U
 #define SOFT_STALL_DETECT_MS         500U
 #define SOFT_STALL_SPEED_RPM          3
-#define SOFT_STALL_CMD_TRIG          80
-#define SOFT_STALL_CMD_SAFE          60
+// Command-domain soft gate tuned to intervene only near hard-stall request levels.
+#define SOFT_STALL_CMD_TRIG          98
+#define SOFT_STALL_CMD_SAFE          90
 
 static uint8_t  hardStallPauseActive;
 static uint32_t hardStallReleaseTick;
