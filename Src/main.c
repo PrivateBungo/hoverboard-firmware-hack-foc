@@ -174,7 +174,9 @@ static uint16_t rate = RATE; // Adjustable rate to support multiple drive modes 
 #define STALL_ERR_MASK               4U
 #define HARD_STALL_PAUSE_MS          5000U
 #define SOFT_STALL_DETECT_MS         500U
-#define SOFT_STALL_TORQUE_MARGIN     20
+#define SOFT_STALL_SPEED_RPM          3
+#define SOFT_STALL_TORQUE_TRIG_PCT    85
+#define SOFT_STALL_TORQUE_SAFE_PCT    60
 
 static uint8_t  hardStallPauseActive;
 static uint32_t hardStallReleaseTick;
@@ -190,11 +192,12 @@ static void clearHardStallLatch(DW *rtDW, ExtY *rtY) {
 }
 
 static void softStallGate(int *pwmCmd, int16_t motorSpeed, uint32_t now, uint32_t *sinceTick, uint8_t *stallActive) {
-  const int16_t speedThreshold = MAX(1, rtP_Left.n_stdStillDet >> 4);
+  const int16_t speedThreshold = SOFT_STALL_SPEED_RPM;
   const int16_t torqueThreshold = rtP_Left.r_errInpTgtThres;
-  const int16_t safeTorque = MAX(0, torqueThreshold - SOFT_STALL_TORQUE_MARGIN);
+  const int16_t torqueTrigger = (int16_t)(((int32_t)torqueThreshold * SOFT_STALL_TORQUE_TRIG_PCT) / 100);
+  const int16_t safeTorque = (int16_t)(((int32_t)torqueThreshold * SOFT_STALL_TORQUE_SAFE_PCT) / 100);
 
-  const uint8_t stallCondition = (ABS(motorSpeed) <= speedThreshold) && (ABS(*pwmCmd) > torqueThreshold);
+  const uint8_t stallCondition = (ABS(motorSpeed) <= speedThreshold) && (ABS(*pwmCmd) >= torqueTrigger);
 
   if (stallCondition) {
     if (*sinceTick == 0U) {

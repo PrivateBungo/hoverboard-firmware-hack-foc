@@ -244,9 +244,8 @@ void BLDC_Init(void) {
   rtP_Left.r_fieldWeakLo        = FIELD_WEAK_LO << 4;                   // fixdt(1,16,4)
 
   // FOC startup overrides (default values in BLDC_controller_data.c are too conservative)
-  // Disable standstill detection latch: with n_stdStillDet=0, Abs5 < 0 is never true so
-  // errCode bit2 (=4) cannot latch even when the motor is stalled and PI winds up.
-  rtP_Left.n_stdStillDet        = 0;
+  // Keep standstill detection active (3 rpm) so hard-stall protection still works.
+  rtP_Left.n_stdStillDet        = 3 << 4;                              // fixdt(1,16,4)
   // Lower FOC activation / 6-step deactivation thresholds so FOC engages almost immediately
   // (defaults: n_commDeacvHi=480=30rpm, n_commAcvLo=240=15rpm).
   rtP_Left.n_commDeacvHi        = 2 << 4;                               // fixdt(1,16,4): FOC activates at 2 rpm
