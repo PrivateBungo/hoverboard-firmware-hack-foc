@@ -89,6 +89,9 @@ ExtU     rtU_Right;                     /* External inputs */
 ExtY     rtY_Right;                     /* External outputs */
 //---------------
 
+extern volatile uint8_t g_errCodeLeftEffective;
+extern volatile uint8_t g_errCodeRightEffective;
+
 uint8_t  inIdx      = 0;
 uint8_t  inIdx_prev = 0;
 #if defined(PRI_INPUT1) && defined(PRI_INPUT2) && defined(AUX_INPUT1) && defined(AUX_INPUT2)
@@ -1426,7 +1429,7 @@ void sideboardLeds(uint8_t *leds) {
     // Error handling
     // Critical error:  LED1 on (RED)     + high pitch beep (hadled in main)
     // Soft error:      LED3 on (YELLOW)  + low  pitch beep (hadled in main)
-    if (rtY_Left.z_errCode || rtY_Right.z_errCode) {
+    if (g_errCodeLeftEffective || g_errCodeRightEffective) {
       *leds |= LED1_SET;
       *leds &= ~LED3_SET & ~LED2_SET;
     }

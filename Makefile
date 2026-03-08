@@ -39,6 +39,7 @@ Src/system_stm32f1xx.c \
 Src/setup.c \
 Src/control.c \
 Src/comms.c \
+Src/drive_control.c \
 Src/util.c \
 Src/main.c \
 Src/bldc.c \
