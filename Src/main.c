@@ -88,6 +88,7 @@ extern volatile int pwml;               // global variable for pwm left. -1000 t
 extern volatile int pwmr;               // global variable for pwm right. -1000 to 1000
 
 extern uint8_t enable;                  // global variable for motor enable
+extern uint8_t ctrlModReq;              // final control mode request
 
 extern int16_t batVoltage;              // global variable for battery voltage
 
@@ -119,6 +120,8 @@ int16_t right_dc_curr;           // global variable for Right DC Link current
 int16_t dc_curr;                 // global variable for Total DC Link current 
 int16_t cmdL;                    // global variable for Left Command 
 int16_t cmdR;                    // global variable for Right Command 
+int16_t cmdL_raw;                // pre-soft-gate left command for debug CSV
+int16_t cmdR_raw;                // pre-soft-gate right command for debug CSV
 
 //------------------------------------------------------------------------
 // Local variables
@@ -170,6 +173,54 @@ static uint32_t    inactivity_timeout_counter;
 static MultipleTap MultipleTapBrake;    // define multiple tap functionality for the Brake pedal
 
 static uint16_t rate = RATE; // Adjustable rate to support multiple drive modes on startup
+
+#define STALL_ERR_MASK               4U
+#define HARD_STALL_PAUSE_MS          5000U
+#define SOFT_STALL_DETECT_MS         500U
+#define SOFT_STALL_SPEED_RPM          3
+#define SOFT_STALL_TORQUE_TRIG_PCT    85
+#define SOFT_STALL_TORQUE_SAFE_PCT    60
+
+static uint8_t  hardStallPauseActive;
+static uint32_t hardStallReleaseTick;
+static uint32_t softStallSinceTickL;
+static uint32_t softStallSinceTickR;
+static uint8_t  softStallActiveL;
+static uint8_t  softStallActiveR;
+static uint8_t  softStallCondL;
+static uint8_t  softStallCondR;
+
+static void clearHardStallLatch(DW *rtDW, ExtY *rtY) {
+  rtDW->UnitDelay_DSTATE_e &= (uint8_t)(~STALL_ERR_MASK);
+  rtY->z_errCode &= (uint8_t)(~STALL_ERR_MASK);
+  rtDW->Merge_p = false;
+}
+
+static void softStallGate(int *pwmCmd, int16_t motorSpeed, uint32_t now, uint32_t *sinceTick, uint8_t *stallActive, uint8_t *stallCond) {
+  const int16_t speedThreshold = SOFT_STALL_SPEED_RPM;
+  const int16_t torqueThreshold = rtP_Left.r_errInpTgtThres;
+  const int16_t torqueTrigger = (int16_t)(((int32_t)torqueThreshold * SOFT_STALL_TORQUE_TRIG_PCT) / 100);
+  const int16_t safeTorque = (int16_t)(((int32_t)torqueThreshold * SOFT_STALL_TORQUE_SAFE_PCT) / 100);
+
+  const uint8_t stallCondition = (ABS(motorSpeed) <= speedThreshold) && (ABS(*pwmCmd) >= torqueTrigger);
+  *stallCond = stallCondition;
+
+  if (stallCondition) {
+    if (*sinceTick == 0U) {
+      *sinceTick = now;
+    }
+    if (!(*stallActive) && ((now - *sinceTick) >= SOFT_STALL_DETECT_MS)) {
+      *stallActive = 1;
+    }
+  } else {
+    *sinceTick = 0U;
+    *stallActive = 0;
+  }
+
+  if (*stallActive && (ABS(*pwmCmd) > safeTorque)) {
+    *pwmCmd = (*pwmCmd >= 0) ? safeTorque : -safeTorque;
+  }
+}
 
 #ifdef MULTI_MODE_DRIVE
   static uint8_t drive_mode;
@@ -256,6 +307,15 @@ int main(void) {
   #endif
 
   while(1) {
+    const uint32_t nowMs = HAL_GetTick();
+
+    if (hardStallPauseActive && ((int32_t)(nowMs - hardStallReleaseTick) >= 0)) {
+      hardStallPauseActive = 0;
+      clearHardStallLatch(&rtDW_Left, &rtY_Left);
+      clearHardStallLatch(&rtDW_Right, &rtY_Right);
+      enable = 1;
+    }
+
     if (buzzerTimer - buzzerTimer_prev > 16*DELAY_IN_MAIN_LOOP) {   // 1 ms = 16 ticks buzzerTimer
 
     readCommand();                        // Read Command: input1[inIdx].cmd, input2[inIdx].cmd
@@ -357,6 +417,21 @@ int main(void) {
         mixerFcn(speed << 4, steer << 4, &cmdR, &cmdL);   // This function implements the equations above
       #endif
 
+      cmdL_raw = cmdL;
+      cmdR_raw = cmdR;
+
+      // ####### STALL TORQUE SOFT GATE #######
+      if (ctrlModReq == TRQ_MODE) {
+        softStallGate(&cmdL, rtY_Left.n_mot, nowMs, &softStallSinceTickL, &softStallActiveL, &softStallCondL);
+        softStallGate(&cmdR, rtY_Right.n_mot, nowMs, &softStallSinceTickR, &softStallActiveR, &softStallCondR);
+      } else {
+        softStallSinceTickL = 0;
+        softStallSinceTickR = 0;
+        softStallActiveL = 0;
+        softStallActiveR = 0;
+        softStallCondL = 0;
+        softStallCondR = 0;
+      }
 
       // ####### SET OUTPUTS (if the target change is less than +/- 100) #######
       #ifdef INVERT_R_DIRECTION
@@ -525,7 +600,8 @@ int main(void) {
           //   (hallR..wR)   : same set for right motor
           static uint8_t csv_header_sent = 0;
           if (!csv_header_sent) {
-            printf("t_ms,cmdL,cmdR,cModReq,cModActL,cModActR,focL,focR,"
+            printf("t_ms,cmdL,cmdR,cmdLRaw,cmdRRaw,cModReq,cModActL,cModActR,focL,focR,"
+                   "hStall,softCondL,softActL,softCondR,softActR,"
                    "hallL,angL,spdL,phAL,phBL,phCL,iqL,idL,cABL,cBCL,dcL,errL,"
                    "olPhL,olThL,olDthL,olVL,uL,vL,wL,"
                    "hallR,angR,spdR,phAR,phBR,phCR,iqR,idR,cABR,cBCR,dcR,errR,"
@@ -537,18 +613,25 @@ int main(void) {
           #ifdef OPENLOOP_ENABLE
           openloop_get_snapshot(&olSnap_L, &olSnap_R);
           #endif
-          printf("%lu,%d,%d,%d,%d,%d,%d,%d,"
+          printf("%lu,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
+                 "%d,%d,%d,%d,%d,"
                  "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
                  "%d,%d,%d,%d,%d,%d,%d,"
                  "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
                  "%d,%d,%d,%d,%d,%d,%d\r\n",
             (unsigned long)(main_loop_counter * DELAY_IN_MAIN_LOOP),          // t_ms
-            (int)cmdL, (int)cmdR,                                              // cmdL,cmdR
+            (int)cmdL, (int)cmdR,                                              // cmdL,cmdR post-gate
+            (int)cmdL_raw, (int)cmdR_raw,                                      // cmdLRaw,cmdRRaw pre-gate
             (int)rtU_Left.z_ctrlModReq,                                        // cModReq  – requested mode (same for both motors)
             (int)rtDW_Left.z_ctrlMod,                                          // cModActL – actual applied left mode (may be forced OPEN on fault)
             (int)rtDW_Right.z_ctrlMod,                                         // cModActR – actual applied right mode
             (int)rtDW_Left.n_commDeacv_Mode,                                   // focL (0=6-step, 1=FOC)
             (int)rtDW_Right.n_commDeacv_Mode,                                  // focR
+            (int)hardStallPauseActive,                                         // hStall
+            (int)softStallCondL,                                               // softCondL
+            (int)softStallActiveL,                                             // softActL
+            (int)softStallCondR,                                               // softCondR
+            (int)softStallActiveR,                                             // softActR
             // ── Left motor ──────────────────────────────────────────────────────
             (int)(rtU_Left.b_hallA * 4 + rtU_Left.b_hallB * 2 + rtU_Left.b_hallC), // hallL
             (int)rtY_Left.a_elecAngle,  // angL
@@ -643,7 +726,16 @@ int main(void) {
         printf("# Powering off: battery voltage too low\r\n");
       #endif
       poweroff();
-    } else if (rtY_Left.z_errCode || rtY_Right.z_errCode) {                                           // 1 beep (low pitch): Motor error, disable motors
+    } else if ((rtY_Left.z_errCode & STALL_ERR_MASK) || (rtY_Right.z_errCode & STALL_ERR_MASK)) {     // Standstill hard-stall: pause 5s then auto-resume
+      if (!hardStallPauseActive) {
+        hardStallPauseActive = 1;
+        hardStallReleaseTick = nowMs + HARD_STALL_PAUSE_MS;
+      }
+      enable = 0;
+      pwml = 0;
+      pwmr = 0;
+      beepCount(1, 24, 1);
+    } else if (rtY_Left.z_errCode || rtY_Right.z_errCode) {                                           // 1 beep (low pitch): Other motor errors, disable motors
       enable = 0;
       beepCount(1, 24, 1);
     } else if (timeoutFlgADC) {                                                                       // 2 beeps (low pitch): ADC timeout
