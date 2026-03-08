@@ -27,6 +27,34 @@ typedef struct {
  * logging. */
 typedef struct { int16_t u, v, w; } AppliedPwm3;
 
+/**
+ * HwGateSnapshot -- hardware gating / enable state captured in the ISR
+ * immediately after the final CCR writes.
+ *
+ * These are the truth sources for whether PWM is actually being driven to each
+ * motor.  Written in the 16 kHz DMA ISR; read by the main-loop CSV path.
+ * Individual fields are ≤ 16 bits so reads are atomic on Cortex-M3; the
+ * struct as a whole may be torn across ISR boundaries, which is acceptable for
+ * debug logging.
+ *
+ * Fields are defined unconditionally so main.c can always declare the extern
+ * and read the (zero-initialised) values even when OPENLOOP_ENABLE is not set.
+ */
+typedef struct {
+    uint8_t  moe_l;    /* 1 = LEFT_TIM  (TIM8) BDTR.MOE set → outputs enabled */
+    uint8_t  moe_r;    /* 1 = RIGHT_TIM (TIM1) BDTR.MOE set → outputs enabled */
+    uint16_t ccer_l;   /* LEFT_TIM  CCER register (channel-enable mask, bits[11:0]) */
+    uint16_t ccer_r;   /* RIGHT_TIM CCER register */
+    uint8_t  enable;   /* firmware-level enable flag (main-loop safety gate) */
+    uint8_t  enableFin;/* enableFin = enable && !errCodeL && !errCodeR (at time of CCR write) */
+    uint16_t ccr_ul;   /* LEFT  motor CCR channel U (actual compare value written to timer) */
+    uint16_t ccr_vl;   /* LEFT  motor CCR channel V */
+    uint16_t ccr_wl;   /* LEFT  motor CCR channel W */
+    uint16_t ccr_ur;   /* RIGHT motor CCR channel U */
+    uint16_t ccr_vr;   /* RIGHT motor CCR channel V */
+    uint16_t ccr_wr;   /* RIGHT motor CCR channel W */
+} HwGateSnapshot;
+
 #ifdef OPENLOOP_ENABLE
 
 /**

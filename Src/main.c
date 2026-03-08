@@ -72,6 +72,9 @@ extern DW   rtDW_Right;                 /* Observable states */
 extern volatile AppliedPwm3 dbg_applied_pwm_L;
 extern volatile AppliedPwm3 dbg_applied_pwm_R;
 
+/* Hardware gating / enable state snapshot captured by bldc.c ISR. */
+extern volatile HwGateSnapshot dbg_hw_gate;
+
 extern uint8_t     inIdx;               // input index used for dual-inputs
 extern uint8_t     inIdx_prev;
 extern InputStruct input1[];            // input structure
@@ -523,13 +526,23 @@ int main(void) {
           //   olVL          : left  open-loop voltage amplitude
           //   uL,vL,wL      : left  final applied PWM phase commands (post OPENLOOP override), written to timer CCRs
           //   (hallR..wR)   : same set for right motor
+          // Hardware gating / enable state columns (truth sources for inverter switching):
+          //   tim8_moe      : LEFT_TIM  (TIM8) BDTR.MOE bit (1=outputs enabled, 0=disabled/gated off)
+          //   tim1_moe      : RIGHT_TIM (TIM1) BDTR.MOE bit
+          //   ccer8         : LEFT_TIM  CCER register bits[11:0] (channel-enable mask; const after init)
+          //   ccer1         : RIGHT_TIM CCER register bits[11:0]
+          //   enaFin        : firmware-level enableFin (enable && !errCodeL && !errCodeR)
+          //   ccrUL..ccrWL  : LEFT  motor timer CCR compare values (actual duty [0..2000])
+          //   ccrUR..ccrWR  : RIGHT motor timer CCR compare values
           static uint8_t csv_header_sent = 0;
           if (!csv_header_sent) {
             printf("t_ms,cmdL,cmdR,cModReq,cModActL,cModActR,focL,focR,"
                    "hallL,angL,spdL,phAL,phBL,phCL,iqL,idL,cABL,cBCL,dcL,errL,"
                    "olPhL,olThL,olDthL,olVL,uL,vL,wL,"
                    "hallR,angR,spdR,phAR,phBR,phCR,iqR,idR,cABR,cBCR,dcR,errR,"
-                   "olPhR,olThR,olDthR,olVR,uR,vR,wR\r\n");
+                   "olPhR,olThR,olDthR,olVR,uR,vR,wR,"
+                   "tim8_moe,tim1_moe,ccer8,ccer1,enaFin,"
+                   "ccrUL,ccrVL,ccrWL,ccrUR,ccrVR,ccrWR\r\n");
             csv_header_sent = 1;
           }
           // Snapshot open-loop state atomically; falls back to all-zeros when OPENLOOP_ENABLE not defined.
@@ -541,7 +554,9 @@ int main(void) {
                  "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
                  "%d,%d,%d,%d,%d,%d,%d,"
                  "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
-                 "%d,%d,%d,%d,%d,%d,%d\r\n",
+                 "%d,%d,%d,%d,%d,%d,%d,"
+                 "%d,%d,%d,%d,%d,"
+                 "%d,%d,%d,%d,%d,%d\r\n",
             (unsigned long)(main_loop_counter * DELAY_IN_MAIN_LOOP),          // t_ms
             (int)cmdL, (int)cmdR,                                              // cmdL,cmdR
             (int)rtU_Left.z_ctrlModReq,                                        // cModReq  – requested mode (same for both motors)
@@ -592,7 +607,20 @@ int main(void) {
             // ── Right final applied PWM (post OPENLOOP override) ─────────────
             (int)dbg_applied_pwm_R.u,   // uR
             (int)dbg_applied_pwm_R.v,   // vR
-            (int)dbg_applied_pwm_R.w);  // wR
+            (int)dbg_applied_pwm_R.w,   // wR
+            // ── Hardware gating / enable state ───────────────────────────────
+            (int)dbg_hw_gate.moe_l,     // tim8_moe  (0=PWM gated off, 1=enabled)
+            (int)dbg_hw_gate.moe_r,     // tim1_moe
+            (int)dbg_hw_gate.ccer_l,    // ccer8  (channel-enable mask; const after init)
+            (int)dbg_hw_gate.ccer_r,    // ccer1
+            (int)dbg_hw_gate.enableFin, // enaFin (enable && !errCodeL && !errCodeR)
+            // ── Actual CCR compare values (timer duty-cycle registers) ────────
+            (int)dbg_hw_gate.ccr_ul,    // ccrUL
+            (int)dbg_hw_gate.ccr_vl,    // ccrVL
+            (int)dbg_hw_gate.ccr_wl,    // ccrWL
+            (int)dbg_hw_gate.ccr_ur,    // ccrUR
+            (int)dbg_hw_gate.ccr_vr,    // ccrVR
+            (int)dbg_hw_gate.ccr_wr);   // ccrWR
         #endif
       }
     #endif
