@@ -88,6 +88,7 @@ extern volatile int pwml;               // global variable for pwm left. -1000 t
 extern volatile int pwmr;               // global variable for pwm right. -1000 to 1000
 
 extern uint8_t enable;                  // global variable for motor enable
+extern uint8_t ctrlModReq;              // final control mode request
 
 extern int16_t batVoltage;              // global variable for battery voltage
 
@@ -412,9 +413,15 @@ int main(void) {
       #endif
 
       // ####### STALL TORQUE SOFT GATE #######
-      softStallGate(&cmdL, rtY_Left.n_mot, nowMs, &softStallSinceTickL, &softStallActiveL);
-      softStallGate(&cmdR, rtY_Right.n_mot, nowMs, &softStallSinceTickR, &softStallActiveR);
-
+      if (ctrlModReq == TRQ_MODE) {
+        softStallGate(&cmdL, rtY_Left.n_mot, nowMs, &softStallSinceTickL, &softStallActiveL);
+        softStallGate(&cmdR, rtY_Right.n_mot, nowMs, &softStallSinceTickR, &softStallActiveR);
+      } else {
+        softStallSinceTickL = 0;
+        softStallSinceTickR = 0;
+        softStallActiveL = 0;
+        softStallActiveR = 0;
+      }
 
       // ####### SET OUTPUTS (if the target change is less than +/- 100) #######
       #ifdef INVERT_R_DIRECTION
