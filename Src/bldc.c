@@ -262,20 +262,17 @@ void DMA1_Channel1_IRQHandler(void) {
             olStateL.counter = 0;
           }
         } else {
-          /* ROTATE phase: ramp delta_theta and advance synthetic angle */
-          int16_t dt = (int16_t)((int32_t)OPENLOOP_DELTA_THETA_MAX * olStateL.counter / OPENLOOP_ACCEL_DURATION);
-          if (dt > OPENLOOP_DELTA_THETA_MAX) {
-            dt = OPENLOOP_DELTA_THETA_MAX;
-          }
+          /* ROTATE phase: diagnostic slow-spin build — clamp to 1 count/ISR so
+           * "open-loop too fast" cannot explain a stuck rotor.  This yields
+           * ~0.4 rpm mechanical (1/23040 rev × 16000 Hz × 60 s / 15 pole-pairs).
+           * Normal ramp-to-OPENLOOP_DELTA_THETA_MAX behaviour is intentionally
+           * bypassed here; restore to the ramping version for production. */
+          int16_t dt = 1;
           olStateL.delta_theta = (pwml > 0) ? dt : (int16_t)(-dt);
 
           olStateL.theta += olStateL.delta_theta;
           if (olStateL.theta >= 23040) olStateL.theta -= 23040;
           if (olStateL.theta < 0)      olStateL.theta += 23040;
-
-          if (olStateL.counter > OPENLOOP_ACCEL_DURATION) {
-            olStateL.counter = OPENLOOP_ACCEL_DURATION;
-          }
         }
 
         /* Generate 3-phase sinusoidal output from synthetic angle */
@@ -366,20 +363,15 @@ void DMA1_Channel1_IRQHandler(void) {
             olStateR.counter = 0;
           }
         } else {
-          /* ROTATE phase: ramp delta_theta and advance synthetic angle */
-          int16_t dt = (int16_t)((int32_t)OPENLOOP_DELTA_THETA_MAX * olStateR.counter / OPENLOOP_ACCEL_DURATION);
-          if (dt > OPENLOOP_DELTA_THETA_MAX) {
-            dt = OPENLOOP_DELTA_THETA_MAX;
-          }
+          /* ROTATE phase: diagnostic slow-spin build — clamp to 1 count/ISR so
+           * "open-loop too fast" cannot explain a stuck rotor.  Same as left motor.
+           * Restore to the ramping version for production. */
+          int16_t dt = 1;
           olStateR.delta_theta = (pwmr > 0) ? dt : (int16_t)(-dt);
 
           olStateR.theta += olStateR.delta_theta;
           if (olStateR.theta >= 23040) olStateR.theta -= 23040;
           if (olStateR.theta < 0)      olStateR.theta += 23040;
-
-          if (olStateR.counter > OPENLOOP_ACCEL_DURATION) {
-            olStateR.counter = OPENLOOP_ACCEL_DURATION;
-          }
         }
 
         /* Generate 3-phase sinusoidal output from synthetic angle */

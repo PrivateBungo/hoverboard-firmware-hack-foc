@@ -496,11 +496,11 @@ int main(void) {
 
     // ####### DEBUG SERIAL OUT #######
     #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
-      if (main_loop_counter % 25 == 0) {    // Send data periodically every 125 ms
+      if (main_loop_counter % 10 == 0) {    // Send data periodically every 50 ms (20 Hz)
         #if defined(DEBUG_SERIAL_PROTOCOL)
           process_debug();
         #else
-          // CSV: print column header once at startup, then one data row every 125 ms.
+          // CSV: print column header once at startup, then one data row every 50 ms (20 Hz).
           // Columns:
           //   t_ms          : approximate uptime in ms
           //   cmdL,cmdR     : motor commands [-1000,1000]

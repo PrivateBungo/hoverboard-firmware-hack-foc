@@ -41,7 +41,7 @@ Protocol (little-endian, all fields 2 bytes):
         uint16  cmdLed       LED command flags
         uint16  checksum     XOR of all preceding fields
 
-    CSV debug stream (board → host, sent every 125 ms, via debug port):
+    CSV debug stream (board → host, sent every 50 ms (20 Hz), via debug port):
         One header row (column names), then data rows.
         Lines starting with '#' are diagnostic comments and can be ignored.
         Columns:
@@ -81,6 +81,7 @@ Usage:
     --steering      Fixed steering command to hold          (default: 0)
 
 Press Ctrl+C to stop and send speed=0 before exiting.
+When --duration_s is set the script stops automatically after that many seconds.
 """
 
 import argparse
@@ -272,6 +273,9 @@ def main() -> None:
                         help="Steering command [-1000, 1000] (default 0)")
     parser.add_argument("--steer", type=int, default=None,
                         help="Alias for --steering (deprecated; use --steering)")
+    parser.add_argument("--duration_s", type=float, default=None,
+                        help="Auto-stop after this many seconds (e.g. 2.0). "
+                             "Sends speed=0 and exits cleanly. Default: run until Ctrl+C.")
     args = parser.parse_args()
 
     target_speed = max(-1000, min(1000, args.speed))
@@ -313,9 +317,15 @@ def main() -> None:
         dbg_reader.start()
 
     # ── Main control loop ─────────────────────────────────────────────────────
+    t0 = time.monotonic()
     current_speed = 0
     try:
         while True:
+            # Auto-stop when duration_s has elapsed
+            if args.duration_s is not None and (time.monotonic() - t0) >= args.duration_s:
+                print(f"\nDuration {args.duration_s} s elapsed — stopping…")
+                break
+
             # Gentle linear ramp toward target speed
             if current_speed < target_speed:
                 current_speed = min(current_speed + RAMP_STEP, target_speed)
