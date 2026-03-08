@@ -348,3 +348,75 @@ The experiments below are listed in priority order. Each one tests a specific hy
 | At `OPENLOOP_DELTA_THETA_MAX=36` | — | ≈100 rpm mechanical |
 | `t_errQual` (debounce to qualify error) | 1280 | 80 ms |
 | `t_errDequal` (debounce to clear error) | 9600 | 600 ms |
+
+---
+
+## 7. CSV Debug Stream Column Reference
+
+The firmware prints one CSV header line at boot and one data row every 125 ms via the debug UART (USART3). The host script `scripts/uart_control_test.py` always writes the header as the first line of the log file, regardless of whether the firmware has sent its own.
+
+### Column definitions
+
+| Column | Source | Notes |
+|---|---|---|
+| `t_ms` | `main_loop_counter * DELAY_IN_MAIN_LOOP` | Approximate uptime in ms |
+| `cmdL` | left motor command | Sent command [-1000, 1000] |
+| `cmdR` | right motor command | Sent command [-1000, 1000] |
+| `cModReq` | `rtU_Left.z_ctrlModReq` | **Requested** control mode (0=OPEN, 1=VLT, 2=SPD, 3=TRQ). Set by the application; shared for both motors. |
+| `cModActL` | `rtDW_Left.z_ctrlMod` | **Actual applied** left mode. May differ from `cModReq`; forced to OPEN (0) when the BLDC diagnostics latch fires (`errCode` bit 2). |
+| `cModActR` | `rtDW_Right.z_ctrlMod` | **Actual applied** right mode. Same interpretation as `cModActL`. |
+| `focL` | `rtDW_Left.n_commDeacv_Mode` | Left commutation relay: 0 = 6-step commutation active, 1 = FOC commutation active. Transitions at `n_commDeacvHi` (2 rpm) and `n_commAcvLo` (1 rpm). |
+| `focR` | `rtDW_Right.n_commDeacv_Mode` | Right commutation relay. Same interpretation as `focL`. |
+| `hallL` | `b_hallA*4 + b_hallB*2 + b_hallC` | Left Hall sector raw value (valid: 1–6; 0 or 7 = fault). |
+| `angL` | `rtY_Left.a_elecAngle` | Left FOC electrical angle estimate (fixdt units). Updated by Hall edge interpolation; unreliable at very low speeds. |
+| `spdL` | `rtY_Left.n_mot` | Left motor speed [RPM] (Hall-derived). |
+| `phAL..phCL` | `rtY_Left.DC_phaA/B/C` | Left **BLDC controller** phase duty output. **These are NOT the actual motor drive voltages when OPENLOOP is active.** When `OPENLOOP_ENABLE` is defined and `olPhL > 0`, `bldc.c` overrides the timer registers (`ul/vl/wl`) with sinusoidal values after this point in the ISR. Use `cABL/cBCL` to see actual motor current. |
+| `iqL,idL` | `rtY_Left.iq/id` | Left torque/flux frame currents (A2BIT_CONV units; divide by ~50 for Amps). |
+| `cABL,cBCL` | `rtU_Left.i_phaAB/i_phaBC` | Left phase AB/BC currents from ADC (raw bits; divide by ~50 for Amps). Reflects **actual** motor current including OPENLOOP sinusoidal drive. |
+| `dcL` | `rtU_Left.i_DCLink` | Left DC-link current (raw ADC bits). |
+| `errL` | `rtY_Left.z_errCode` | Left error bitmask: bit 0 = Hall-000 fault, bit 1 = Hall-111 fault, bit 2 = standstill latch (permanent once set). |
+| `olPhL` | `olStateL.phase` | Left open-loop **phase**: 0 = inactive, 1 = ALIGN (field lock, 200 ms), 2 = ROTATE (acceleration ramp, 1 s). Always 0 when `OPENLOOP_ENABLE` is not defined. |
+| `olThL` | `olStateL.theta` | Left open-loop **synthetic electrical angle** [0..23039]. Advances by `delta_theta` each ISR cycle during phase 2. Same units as the Simulink `plook` table. |
+| `olDthL` | `olStateL.delta_theta` | Left open-loop **angle increment per ISR** (signed; negative = reverse). Ramps from 0 to ±`OPENLOOP_DELTA_THETA_MAX` during phase 2. |
+| `olVL` | `olStateL.voltage` | Left open-loop **voltage amplitude**. Ramps from 0 to `OPENLOOP_VOLTAGE_MAX` (700) during phase 1, then held constant in phase 2. |
+| `uL,vL,wL` | `dbg_applied_pwm_L.u/v/w` | Left **final applied PWM phase commands** written to the inverter timer CCR registers, captured after all overrides (including OPENLOOP). These show what the inverter was actually commanded each cycle. During ALIGN (`olPhL=1`) these should be static (only magnitude ramps); during ROTATE (`olPhL=2`) they should evolve as 120°-shifted sinusoids across successive 125 ms snapshots. Always reflects the commanded values even when `OPENLOOP_ENABLE` is not defined. |
+| `hallR..wR` | (same sources, right motor) | Same set of columns for the right motor. |
+
+### How to interpret `cModReq` vs `cModAct*`
+
+In normal operation `cModActL == cModActR == cModReq`. They diverge when:
+
+- **`errCode` bit 2 set** (`errL & 4`): `F03_Control_Mode_Manager` forces `z_ctrlMod = OPEN_MODE (0)` regardless of `z_ctrlModReq`. The motor is permanently locked in zero-output mode until reset.
+- **`b_motEna = 0`**: same effect.
+
+Whenever `cModActL != cModReq` look at `errL` to identify the cause.
+
+### How to interpret `focL/focR`
+
+`focL = 0` means the BLDC controller is using 6-step Hall commutation (low speed or transition detection active).  
+`focL = 1` means full FOC (Park/Clarke + PI) is active.
+
+During OPENLOOP startup (`olPhL > 0`), `focL` is 0 — the open-loop sinusoidal drive operates precisely because FOC is not yet trusted.
+
+### How to interpret `phA*/phB*/phC*` during OPENLOOP
+
+`phAL/phBL/phCL` are the **BLDC controller's** outputs (`rtY_Left.DC_phaA/B/C`), captured **before** the OPENLOOP override in the ISR. When `olPhL > 0`, the timer registers actually receive the sinusoidal values computed from `olThL` and `olVL`. The difference between `phAL` and the actual motor drive is only visible indirectly through `cABL/cBCL`.
+
+### How to interpret `uL/vL/wL` (final applied PWM)
+
+`uL/vL/wL` are the **final phase commands** written to the inverter (captured from `dbg_applied_pwm_L` after all overrides in the ISR). They show exactly what the inverter was commanded each 16 kHz cycle, allowing analysis of whether the field vector is rotating:
+
+- During **ALIGN** (`olPhL=1`): `uL/vL/wL` should be **static** — all three values hold constant (proportional to the field-lock angle) while only magnitude increases.
+- During **ROTATE** (`olPhL=2`): `uL/vL/wL` should **evolve as 120°-shifted sinusoids** across successive 125 ms snapshots, confirming the field vector is advancing.
+- When OPENLOOP is inactive (`olPhL=0`) and FOC is active (`focL=1`): `uL/vL/wL` equal `phAL/phBL/phCL` (same BLDC controller output, no override).
+- When `OPENLOOP_ENABLE` is not defined: `uL/vL/wL` always equal `phAL/phBL/phCL`.
+
+### OPENLOOP column units and timing
+
+| State | `olPhL` | `olThL` | `olDthL` | `olVL` |
+|---|---|---|---|---|
+| Inactive | 0 | last value (ignore) | 0 | 0 |
+| ALIGN (phase 1) | 1 | fixed at sector centre [0..23039] | 0 | 0 → 700 (ramps over 200 ms) |
+| ROTATE (phase 2) | 2 | advances each ISR | ±1..±36 (ramps over 1 s) | 700 (constant) |
+
+`olThL` range [0..23039] maps to one electrical revolution. `olDthL = 36` corresponds to approximately 100 rpm mechanical (assuming 15 pole-pairs: 36/23040 × 16000 Hz × 60 s / 15 ≈ 100 rpm).

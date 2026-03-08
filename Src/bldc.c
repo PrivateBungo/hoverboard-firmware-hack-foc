@@ -27,6 +27,7 @@
 #include "setup.h"
 #include "config.h"
 #include "util.h"
+#include "openloop_debug.h"
 
 // Matlab includes and defines - from auto-code generation
 // ###############################################################################
@@ -51,6 +52,12 @@ extern ExtY rtY_Right;                  /* External outputs */
 // ###############################################################################
 
 static int16_t pwm_margin;              /* This margin allows to have a window in the PWM signal for proper FOC Phase currents measurement */
+
+/* Final applied PWM phase commands (post OPENLOOP override), captured every ISR cycle.
+ * Read by the main-loop CSV debug path.  Written in the ISR; volatile is sufficient
+ * since int16_t writes are atomic on Cortex-M3 and we tolerate at most one torn read. */
+volatile AppliedPwm3 dbg_applied_pwm_L = {0};
+volatile AppliedPwm3 dbg_applied_pwm_R = {0};
 
 extern uint8_t ctrlModReq;
 static int16_t curDC_max = (I_DC_MAX * A2BIT_CONV);
@@ -96,6 +103,7 @@ typedef struct {
   int16_t  delta_theta;     /* Current angle increment per ISR cycle (ramping up) */
   uint16_t counter;         /* Cycle counter for timing phases */
   uint8_t  phase;           /* 0=inactive, 1=align, 2=rotate */
+  uint8_t  theta_acc;       /* Q4 fractional accumulator for sub-integer theta steps (0..15) */
 } OpenLoopState;
 
 static OpenLoopState olStateL = {0};
@@ -243,6 +251,7 @@ void DMA1_Channel1_IRQHandler(void) {
         olStateL.counter     = 0;
         olStateL.voltage     = 0;
         olStateL.delta_theta = 0;
+        olStateL.theta_acc   = 0;
       } else {
         olStateL.counter++;
 
@@ -255,20 +264,20 @@ void DMA1_Channel1_IRQHandler(void) {
             olStateL.counter = 0;
           }
         } else {
-          /* ROTATE phase: ramp delta_theta and advance synthetic angle */
-          int16_t dt = (int16_t)((int32_t)OPENLOOP_DELTA_THETA_MAX * olStateL.counter / OPENLOOP_ACCEL_DURATION);
-          if (dt > OPENLOOP_DELTA_THETA_MAX) {
-            dt = OPENLOOP_DELTA_THETA_MAX;
-          }
-          olStateL.delta_theta = (pwml > 0) ? dt : (int16_t)(-dt);
+          /* ROTATE phase: diagnostic slow-spin build — ~1 electrical rotation/sec.
+           * ISR runs at 16 kHz; one full rotation = 23040 counts.
+           * Target: 23040/16000 = 1.4375 counts/ISR.
+           * Use Q4 fractional accumulator: add 23 per ISR (23/16 = 1.4375),
+           * apply integer part → 23000 counts/sec ÷ 23040 ≈ 0.998 Hz (within 0.2%).
+           * Restore to the ramping version for production. */
+          olStateL.theta_acc += 23;
+          uint8_t dt_u = olStateL.theta_acc >> 4;
+          olStateL.theta_acc &= 0x0F;
+          olStateL.delta_theta = (pwml > 0) ? (int16_t)dt_u : (int16_t)(-dt_u);
 
           olStateL.theta += olStateL.delta_theta;
           if (olStateL.theta >= 23040) olStateL.theta -= 23040;
           if (olStateL.theta < 0)      olStateL.theta += 23040;
-
-          if (olStateL.counter > OPENLOOP_ACCEL_DURATION) {
-            olStateL.counter = OPENLOOP_ACCEL_DURATION;
-          }
         }
 
         /* Generate 3-phase sinusoidal output from synthetic angle */
@@ -287,6 +296,9 @@ void DMA1_Channel1_IRQHandler(void) {
 #endif
 
     /* Apply commands */
+    dbg_applied_pwm_L.u = ul;   /* capture final applied commands (post OPENLOOP override) */
+    dbg_applied_pwm_L.v = vl;
+    dbg_applied_pwm_L.w = wl;
     LEFT_TIM->LEFT_TIM_U    = (uint16_t)CLAMP(ul + pwm_res / 2, pwm_margin, pwm_res-pwm_margin);
     LEFT_TIM->LEFT_TIM_V    = (uint16_t)CLAMP(vl + pwm_res / 2, pwm_margin, pwm_res-pwm_margin);
     LEFT_TIM->LEFT_TIM_W    = (uint16_t)CLAMP(wl + pwm_res / 2, pwm_margin, pwm_res-pwm_margin);
@@ -344,6 +356,7 @@ void DMA1_Channel1_IRQHandler(void) {
         olStateR.counter     = 0;
         olStateR.voltage     = 0;
         olStateR.delta_theta = 0;
+        olStateR.theta_acc   = 0;
       } else {
         olStateR.counter++;
 
@@ -356,20 +369,16 @@ void DMA1_Channel1_IRQHandler(void) {
             olStateR.counter = 0;
           }
         } else {
-          /* ROTATE phase: ramp delta_theta and advance synthetic angle */
-          int16_t dt = (int16_t)((int32_t)OPENLOOP_DELTA_THETA_MAX * olStateR.counter / OPENLOOP_ACCEL_DURATION);
-          if (dt > OPENLOOP_DELTA_THETA_MAX) {
-            dt = OPENLOOP_DELTA_THETA_MAX;
-          }
-          olStateR.delta_theta = (pwmr > 0) ? dt : (int16_t)(-dt);
+          /* ROTATE phase: diagnostic slow-spin build — ~1 electrical rotation/sec.
+           * Same accumulator approach as left motor. */
+          olStateR.theta_acc += 23;
+          uint8_t dt_u = olStateR.theta_acc >> 4;
+          olStateR.theta_acc &= 0x0F;
+          olStateR.delta_theta = (pwmr > 0) ? (int16_t)dt_u : (int16_t)(-dt_u);
 
           olStateR.theta += olStateR.delta_theta;
           if (olStateR.theta >= 23040) olStateR.theta -= 23040;
           if (olStateR.theta < 0)      olStateR.theta += 23040;
-
-          if (olStateR.counter > OPENLOOP_ACCEL_DURATION) {
-            olStateR.counter = OPENLOOP_ACCEL_DURATION;
-          }
         }
 
         /* Generate 3-phase sinusoidal output from synthetic angle */
@@ -388,6 +397,9 @@ void DMA1_Channel1_IRQHandler(void) {
 #endif
 
     /* Apply commands */
+    dbg_applied_pwm_R.u = ur;   /* capture final applied commands (post OPENLOOP override) */
+    dbg_applied_pwm_R.v = vr;
+    dbg_applied_pwm_R.w = wr;
     RIGHT_TIM->RIGHT_TIM_U  = (uint16_t)CLAMP(ur + pwm_res / 2, pwm_margin, pwm_res-pwm_margin);
     RIGHT_TIM->RIGHT_TIM_V  = (uint16_t)CLAMP(vr + pwm_res / 2, pwm_margin, pwm_res-pwm_margin);
     RIGHT_TIM->RIGHT_TIM_W  = (uint16_t)CLAMP(wr + pwm_res / 2, pwm_margin, pwm_res-pwm_margin);
@@ -399,3 +411,25 @@ void DMA1_Channel1_IRQHandler(void) {
  // ###############################################################################
 
 }
+
+#ifdef OPENLOOP_ENABLE
+/**
+ * openloop_get_snapshot() -- atomically copy open-loop state for both motors.
+ *
+ * Interrupts are disabled for the duration of the copy to prevent torn reads
+ * from the 16 kHz DMA ISR that updates olStateL/olStateR.
+ */
+void openloop_get_snapshot(OpenLoopSnapshot *left, OpenLoopSnapshot *right) {
+  uint32_t prim = __get_PRIMASK();
+  __disable_irq();
+  left->phase        = (int16_t)olStateL.phase;
+  left->theta        = olStateL.theta;
+  left->delta_theta  = olStateL.delta_theta;
+  left->voltage      = olStateL.voltage;
+  right->phase       = (int16_t)olStateR.phase;
+  right->theta       = olStateR.theta;
+  right->delta_theta = olStateR.delta_theta;
+  right->voltage     = olStateR.voltage;
+  if (!prim) { __enable_irq(); }
+}
+#endif /* OPENLOOP_ENABLE */

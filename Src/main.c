@@ -30,6 +30,7 @@
 #include "BLDC_controller.h"      /* BLDC's header file */
 #include "rtwtypes.h"
 #include "comms.h"
+#include "openloop_debug.h"
 
 #if defined(DEBUG_I2C_LCD) || defined(SUPPORT_LCD)
 #include "hd44780.h"
@@ -63,7 +64,13 @@ extern ExtY rtY_Left;                   /* External outputs */
 extern ExtY rtY_Right;                  /* External outputs */
 extern ExtU rtU_Left;                   /* External inputs */
 extern ExtU rtU_Right;                  /* External inputs */
+extern DW   rtDW_Left;                  /* Observable states */
+extern DW   rtDW_Right;                 /* Observable states */
 //---------------
+
+/* Final applied PWM commands captured by bldc.c ISR (post OPENLOOP override). */
+extern volatile AppliedPwm3 dbg_applied_pwm_L;
+extern volatile AppliedPwm3 dbg_applied_pwm_R;
 
 extern uint8_t     inIdx;               // input index used for dual-inputs
 extern uint8_t     inIdx_prev;
@@ -489,42 +496,64 @@ int main(void) {
 
     // ####### DEBUG SERIAL OUT #######
     #if defined(DEBUG_SERIAL_USART2) || defined(DEBUG_SERIAL_USART3)
-      if (main_loop_counter % 25 == 0) {    // Send data periodically every 125 ms
+      if (main_loop_counter % 10 == 0) {    // Send data periodically every 50 ms (20 Hz)
         #if defined(DEBUG_SERIAL_PROTOCOL)
           process_debug();
         #else
-          // CSV: print column header once at startup, then one data row every 125 ms.
+          // CSV: print column header once at startup, then one data row every 50 ms (20 Hz).
           // Columns:
-          //   t_ms        : approximate uptime in ms
-          //   cmdL,cmdR   : motor commands [-1000,1000]
-          //   cMod        : control mode (0=OPEN,1=VLT,2=SPD,3=TRQ)
-          //   hallL       : left  Hall sector (b_hallA*4+B*2+C, valid 1-6)
-          //   angL        : left  electrical angle (FOC estimate, fixdt units)
-          //   spdL        : left  motor speed [RPM]
-          //   phAL..phCL  : left  phase duty values (DC_phaA/B/C)
-          //   iqL,idL     : left  torque/flux frame currents (A2BIT_CONV units)
-          //   cABL,cBCL   : left  phase AB/BC currents (raw ADC bits; /50 = Amps)
-          //   dcL         : left  DC-link current (raw ADC bits)
-          //   errL        : left  error code bitmask (0=OK, bit0=Hall-000, bit1=Hall-111, bit2=standstill-latch)
-          //   (hallR..errR): same set for right motor
+          //   t_ms          : approximate uptime in ms
+          //   cmdL,cmdR     : motor commands [-1000,1000]
+          //   cModReq       : requested control mode (0=OPEN,1=VLT,2=SPD,3=TRQ) – rtU_Left.z_ctrlModReq
+          //   cModActL      : actual applied mode for left  motor – rtDW_Left.z_ctrlMod  (may differ from cModReq, e.g. forced to OPEN on fault)
+          //   cModActR      : actual applied mode for right motor – rtDW_Right.z_ctrlMod
+          //   focL          : left  commutation relay (0=6-step active, 1=FOC active) – rtDW_Left.n_commDeacv_Mode
+          //   focR          : right commutation relay
+          //   hallL         : left  Hall sector (b_hallA*4+B*2+C, valid 1-6)
+          //   angL          : left  electrical angle (FOC estimate, fixdt units)
+          //   spdL          : left  motor speed [RPM]
+          //   phAL..phCL    : left  BLDC controller phase duty (DC_phaA/B/C); NOTE: actual motor drive may differ when OPENLOOP overrides ul/vl/wl
+          //   iqL,idL       : left  torque/flux frame currents (A2BIT_CONV units)
+          //   cABL,cBCL     : left  phase AB/BC currents (raw ADC bits; /50 = Amps)
+          //   dcL           : left  DC-link current (raw ADC bits)
+          //   errL          : left  error code bitmask (0=OK, bit0=Hall-000, bit1=Hall-111, bit2=standstill-latch)
+          //   olPhL         : left  open-loop phase (0=inactive, 1=align, 2=rotate); zero when OPENLOOP_ENABLE not defined
+          //   olThL         : left  open-loop synthetic theta [0..23039]
+          //   olDthL        : left  open-loop delta_theta per ISR (signed)
+          //   olVL          : left  open-loop voltage amplitude
+          //   uL,vL,wL      : left  final applied PWM phase commands (post OPENLOOP override), written to timer CCRs
+          //   (hallR..wR)   : same set for right motor
           static uint8_t csv_header_sent = 0;
           if (!csv_header_sent) {
-            printf("t_ms,cmdL,cmdR,cMod,"
+            printf("t_ms,cmdL,cmdR,cModReq,cModActL,cModActR,focL,focR,"
                    "hallL,angL,spdL,phAL,phBL,phCL,iqL,idL,cABL,cBCL,dcL,errL,"
-                   "hallR,angR,spdR,phAR,phBR,phCR,iqR,idR,cABR,cBCR,dcR,errR\r\n");
+                   "olPhL,olThL,olDthL,olVL,uL,vL,wL,"
+                   "hallR,angR,spdR,phAR,phBR,phCR,iqR,idR,cABR,cBCR,dcR,errR,"
+                   "olPhR,olThR,olDthR,olVR,uR,vR,wR\r\n");
             csv_header_sent = 1;
           }
-          printf("%lu,%d,%d,%d,"
+          // Snapshot open-loop state atomically; falls back to all-zeros when OPENLOOP_ENABLE not defined.
+          OpenLoopSnapshot olSnap_L = {0}, olSnap_R = {0};
+          #ifdef OPENLOOP_ENABLE
+          openloop_get_snapshot(&olSnap_L, &olSnap_R);
+          #endif
+          printf("%lu,%d,%d,%d,%d,%d,%d,%d,"
                  "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
-                 "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\r\n",
-            (unsigned long)(main_loop_counter * DELAY_IN_MAIN_LOOP),        // t_ms
-            (int)cmdL, (int)cmdR,                                           // cmdL,cmdR
-            (int)rtU_Left.z_ctrlModReq,                                     // cMod
-            // ── Left motor ─────────────────────────────────────────────────────
+                 "%d,%d,%d,%d,%d,%d,%d,"
+                 "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
+                 "%d,%d,%d,%d,%d,%d,%d\r\n",
+            (unsigned long)(main_loop_counter * DELAY_IN_MAIN_LOOP),          // t_ms
+            (int)cmdL, (int)cmdR,                                              // cmdL,cmdR
+            (int)rtU_Left.z_ctrlModReq,                                        // cModReq  – requested mode (same for both motors)
+            (int)rtDW_Left.z_ctrlMod,                                          // cModActL – actual applied left mode (may be forced OPEN on fault)
+            (int)rtDW_Right.z_ctrlMod,                                         // cModActR – actual applied right mode
+            (int)rtDW_Left.n_commDeacv_Mode,                                   // focL (0=6-step, 1=FOC)
+            (int)rtDW_Right.n_commDeacv_Mode,                                  // focR
+            // ── Left motor ──────────────────────────────────────────────────────
             (int)(rtU_Left.b_hallA * 4 + rtU_Left.b_hallB * 2 + rtU_Left.b_hallC), // hallL
             (int)rtY_Left.a_elecAngle,  // angL
             (int)rtY_Left.n_mot,        // spdL  [RPM]
-            (int)rtY_Left.DC_phaA,      // phAL
+            (int)rtY_Left.DC_phaA,      // phAL  (BLDC controller output; ul may differ when OPENLOOP active)
             (int)rtY_Left.DC_phaB,      // phBL
             (int)rtY_Left.DC_phaC,      // phCL
             (int)rtY_Left.iq,           // iqL
@@ -533,11 +562,20 @@ int main(void) {
             (int)rtU_Left.i_phaBC,      // cBCL
             (int)rtU_Left.i_DCLink,     // dcL
             (int)rtY_Left.z_errCode,    // errL
-            // ── Right motor ────────────────────────────────────────────────────
+            // ── Left open-loop state (zeros when OPENLOOP_ENABLE not defined) ──
+            (int)olSnap_L.phase,        // olPhL
+            (int)olSnap_L.theta,        // olThL
+            (int)olSnap_L.delta_theta,  // olDthL
+            (int)olSnap_L.voltage,      // olVL
+            // ── Left final applied PWM (post OPENLOOP override) ──────────────
+            (int)dbg_applied_pwm_L.u,   // uL
+            (int)dbg_applied_pwm_L.v,   // vL
+            (int)dbg_applied_pwm_L.w,   // wL
+            // ── Right motor ─────────────────────────────────────────────────────
             (int)(rtU_Right.b_hallA * 4 + rtU_Right.b_hallB * 2 + rtU_Right.b_hallC), // hallR
             (int)rtY_Right.a_elecAngle, // angR
             (int)rtY_Right.n_mot,       // spdR  [RPM]
-            (int)rtY_Right.DC_phaA,     // phAR
+            (int)rtY_Right.DC_phaA,     // phAR  (BLDC controller output; ur may differ when OPENLOOP active)
             (int)rtY_Right.DC_phaB,     // phBR
             (int)rtY_Right.DC_phaC,     // phCR
             (int)rtY_Right.iq,          // iqR
@@ -545,7 +583,16 @@ int main(void) {
             (int)rtU_Right.i_phaAB,     // cABR
             (int)rtU_Right.i_phaBC,     // cBCR
             (int)rtU_Right.i_DCLink,    // dcR
-            (int)rtY_Right.z_errCode);  // errR
+            (int)rtY_Right.z_errCode,   // errR
+            // ── Right open-loop state (zeros when OPENLOOP_ENABLE not defined) ─
+            (int)olSnap_R.phase,        // olPhR
+            (int)olSnap_R.theta,        // olThR
+            (int)olSnap_R.delta_theta,  // olDthR
+            (int)olSnap_R.voltage,      // olVR
+            // ── Right final applied PWM (post OPENLOOP override) ─────────────
+            (int)dbg_applied_pwm_R.u,   // uR
+            (int)dbg_applied_pwm_R.v,   // vR
+            (int)dbg_applied_pwm_R.w);  // wR
         #endif
       }
     #endif
