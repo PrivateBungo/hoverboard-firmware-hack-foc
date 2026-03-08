@@ -213,12 +213,32 @@ def debug_reader(ser: serial.Serial, log_path: str) -> None:
     them to *log_path*.  Lines starting with '#' are diagnostic comments and are
     also printed to stdout so they are visible during a live run.
 
-    The logger now captures the firmware's CSV header dynamically (line starting
-    with ``t_ms,``) so debug captures remain aligned when columns change.
+    The logger captures the firmware's CSV header dynamically (line starting
+    with ``t_ms,``). If data lines arrive before header, it synthesizes a
+    fallback header from the detected column count so captures stay analyzable.
     """
+    fallback_headers = {
+        # Current firmware format with soft/hard stall telemetry.
+        53: (
+            "t_ms,cmdL,cmdR,cmdLRaw,cmdRRaw,cModReq,cModActL,cModActR,focL,focR,"
+            "hStall,softCondL,softActL,softCondR,softActR,"
+            "hallL,angL,spdL,phAL,phBL,phCL,iqL,idL,cABL,cBCL,dcL,errL,"
+            "olPhL,olThL,olDthL,olVL,uL,vL,wL,"
+            "hallR,angR,spdR,phAR,phBR,phCR,iqR,idR,cABR,cBCR,dcR,errR,"
+            "olPhR,olThR,olDthR,olVR,uR,vR,wR"
+        ),
+        # Legacy firmware format before stall telemetry columns were added.
+        46: (
+            "t_ms,cmdL,cmdR,cModReq,cModActL,cModActR,focL,focR,"
+            "hallL,angL,spdL,phAL,phBL,phCL,iqL,idL,cABL,cBCL,dcL,errL,"
+            "olPhL,olThL,olDthL,olVL,uL,vL,wL,"
+            "hallR,angR,spdR,phAR,phBR,phCR,iqR,idR,cABR,cBCR,dcR,errR,"
+            "olPhR,olThR,olDthR,olVR,uR,vR,wR"
+        ),
+    }
+
     line_buf = b""
     header_written = False
-    warned_pre_header = False
     with open(log_path, "w", buffering=1) as log_file:
         print(f"[DBG] Logging CSV debug output to: {log_path}", flush=True)
         while not _stop_event.is_set():
@@ -238,9 +258,17 @@ def debug_reader(ser: serial.Serial, log_path: str) -> None:
                         header_written = True
                     print(f"[DBG] {decoded}", flush=True)
                     continue
-                if (not header_written) and decoded and (not decoded.startswith("#")) and (not warned_pre_header):
-                    print("[DBG] Warning: data arrived before CSV header; writing raw lines until header appears", flush=True)
-                    warned_pre_header = True
+                if (not header_written) and decoded and (not decoded.startswith("#")):
+                    col_count = len(decoded.split(","))
+                    fallback = fallback_headers.get(col_count)
+                    if fallback is None:
+                        fallback = ",".join(f"col{i}" for i in range(col_count))
+                    log_file.write(fallback + "\n")
+                    header_written = True
+                    print(
+                        f"[DBG] Warning: CSV header missing; synthesized fallback header for {col_count} columns",
+                        flush=True,
+                    )
                 log_file.write(decoded + "\n")
                 # Echo comment lines to stdout for visibility.
                 if decoded.startswith("#"):
