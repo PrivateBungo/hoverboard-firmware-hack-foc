@@ -1,7 +1,11 @@
 # Motor Startup Architecture
 
-*Last updated: 2026-03-07  
+*Last updated: 2026-03-08  
 CSV data sources: debug_20260307_215508.csv (pre-fix), debug_20260307_222136.csv (with OPENLOOP_ENABLE)*
+
+> **Current build mode**: `OPENLOOP_ENABLE` is disabled. `BASELINE_FOC_STANDSTILL_TEST` is enabled.  
+> The 3-stage ALIGN→ROTATE→FOC handoff is preserved in the source (under `#ifdef OPENLOOP_ENABLE`)  
+> but not compiled. See [Section 9](#9-baseline-foc-mode-openloop_enable-disabled) for the rationale.
 
 ---
 
@@ -109,8 +113,8 @@ rtb_LogicalOperator = n_commDeacv_Mode && !dz_cntTrnsDet
 | Parameter | Value set | Meaning |
 |---|---|---|
 | `n_stdStillDet` | 0 | Disable standstill latch trigger (Abs5 < 0 is impossible) |
-| `n_commDeacvHi` | `2 << 4` = 32 | FOC activates at 2 rpm |
-| `n_commAcvLo` | `1 << 4` = 16 | 6-step reactivates at 1 rpm |
+| `n_commDeacvHi` | `2 << 4` = 32 (default) / **0** (BASELINE_FOC_STANDSTILL_TEST) | FOC activates at 2 rpm / always active |
+| `n_commAcvLo` | `1 << 4` = 16 (default) / **0** (BASELINE_FOC_STANDSTILL_TEST) | 6-step reactivates at 1 rpm / only at true zero |
 | `dz_cntTrnsDetHi` | `z_maxCntRst + 2` = 2002 | Disables transition-detection relay (Counter() saturates at 2001) |
 | `Switch2_e` | 1 (both motors) | Correct initial angle estimator state (prevents 60° offset on first edge) |
 | `N_MOT_MAX` | 550 rpm | Headroom for typical hoverboard wheel speed |
@@ -420,3 +424,181 @@ During OPENLOOP startup (`olPhL > 0`), `focL` is 0 — the open-loop sinusoidal 
 | ROTATE (phase 2) | 2 | advances each ISR | ±1..±36 (ramps over 1 s) | 700 (constant) |
 
 `olThL` range [0..23039] maps to one electrical revolution. `olDthL = 36` corresponds to approximately 100 rpm mechanical (assuming 15 pole-pairs: 36/23040 × 16000 Hz × 60 s / 15 ≈ 100 rpm).
+
+### Hardware gating column definitions (new — added 2026-03-08)
+
+| Column | Source | Notes |
+|---|---|---|
+| `tim8_moe` | `(TIM8->BDTR >> 15) & 1` | LEFT motor (TIM8) Main Output Enable. **0 = all PWM outputs gated off regardless of CCR values.** Cleared when `enable==0` or DC-link current exceeds limit. |
+| `tim1_moe` | `(TIM1->BDTR >> 15) & 1` | RIGHT motor (TIM1) Main Output Enable. Same semantics as `tim8_moe`. |
+| `ccer8` | `TIM8->CCER & 0xFFF` | LEFT motor channel-enable mask (bits 11:0). CCxE and CCxNE bits for channels 1–3. Constant after `MX_TIM_Init()`; expected value `0xAAA` (all six outputs enabled). |
+| `ccer1` | `TIM1->CCER & 0xFFF` | RIGHT motor channel-enable mask. Same semantics as `ccer8`. |
+| `enaFin` | `enableFin` (ISR local, captured in snapshot) | Firmware-level composite enable: `enable && !errCodeL && !errCodeR`. Controls `b_motEna` sent to BLDC controller. **Does NOT gate MOE directly**; after the 2026-03-08 fix, open-loop no longer exits when `enaFin=0`. |
+| `ccrUL` | `TIM8->CCR1` | LEFT U-phase compare register at the moment of the CCR write (range 0..2000). Equal to `CLAMP(uL + 1000, 110, 1890)`. |
+| `ccrVL` | `TIM8->CCR2` | LEFT V-phase. |
+| `ccrWL` | `TIM8->CCR3` | LEFT W-phase. |
+| `ccrUR` | `TIM1->CCR1` | RIGHT U-phase. |
+| `ccrVR` | `TIM1->CCR2` | RIGHT V-phase. |
+| `ccrWR` | `TIM1->CCR3` | RIGHT W-phase. |
+
+**When diagnosing "no PWM on scope" check in order:**
+
+1. `tim8_moe` / `tim1_moe` — if 0, gate is off; look at `enable` and DC-link current.
+2. `enaFin` — if 0 with `enable=1`, a transient `errCode` (Hall-000/111 glitch) fired; this is now harmless after the fix.
+3. `ccer8` / `ccer1` — if not `0xAAA`, a timer channel was not started (hardware init issue).
+4. `ccrUL..ccrWR` — if all equal (e.g. all 1000), the commanded duty is 50/50/50 → zero differential voltage → invisible on phase-to-phase scope even though MOE=1.
+
+---
+
+## 8. Open-loop Rotating Vector vs. Actual Inverter Switching
+
+*Finding date: 2026-03-08*
+
+### 8.1 Observation
+
+Oscilloscope measurements with the wheel held static during the open-loop ALIGN/ROTATE window showed **no PWM switching on any motor phase**, despite the debug CSV reporting `olPh=2` (ROTATE active) and rotating `uL/vL/wL` values. The CSV data was telling the truth about what was *commanded*, but the inverter was not delivering it to the motor.
+
+Only after `focL` became 1 (FOC active, motor rotating) did a clear PWM envelope appear on the phase wires.
+
+### 8.2 Measurement procedure
+
+For reliable inverter-output diagnosis:
+
+1. **Prefer phase-to-phase measurement** (U–V, V–W, or W–U) over phase-to-GND. Phase-to-phase cancels the common-mode 50%-duty PWM carrier and directly shows the differential voltage envelope (the sinusoidal drive signal). A flat line means no differential → no torque.
+
+2. **Short timebase** (~10 µs/div) to confirm individual switching edges and measure dead-time. At 16 kHz the PWM period is 62.5 µs.
+
+3. **Longer timebase** (~5 ms/div or more) to see the full sine envelope during ROTATE (≈1 Hz rotation → 1-second full cycle).
+
+4. **Safety**: always keep the scope ground on battery/system negative. Floating the ground on one probe while another is connected to a motor phase risks differential-mode damage to the scope and potential personal injury.
+
+### 8.3 Root cause: `enableFin` gating the open-loop state machine
+
+The open-loop state machine in `bldc.c` previously used `enableFin` for both its entry and exit conditions:
+
+```c
+// Old entry condition:
+if (olStateL.phase == 0 && enableFin && ABS(pwml) > 50 && !n_commDeacv_Mode)
+
+// Old exit condition:
+if (!enableFin || ABS(pwml) <= 50 || n_commDeacv_Mode)
+```
+
+where `enableFin = enable && !rtY_Left.z_errCode && !rtY_Right.z_errCode`.
+
+Any transient non-zero `z_errCode` (e.g. a Hall-000 or Hall-111 glitch at startup) immediately set `enableFin = 0`, which:
+
+1. Caused the open-loop exit condition to fire → `phase = 0`.
+2. Set `b_motEna = 0` in the BLDC controller → BLDC outputs `DC_phaA/B/C = 0`.
+3. Returned `ul = vl = wl = 0` → all CCRs at 1000 (50% duty) → **zero differential voltage**.
+
+Critically, `enable = 1` was maintained throughout (MOE was set; the inverter was *capable* of switching), so the CSV showed rotating `uL/vL/wL` during cycles where the open-loop was briefly still active before the error cleared, but the scope saw a flat line whenever the error was present because the average duty was 50/50/50.
+
+### 8.4 Fix applied (2026-03-08)
+
+The entry and exit conditions were changed to use `enable` (the firmware-level hardware safety gate) instead of `enableFin`:
+
+```c
+// New entry condition:
+if (olStateL.phase == 0 && enable && ABS(pwml) > 50 && !n_commDeacv_Mode)
+
+// New exit condition (bldc.c, both motors):
+if (!enable || ABS(pwml) <= 50 || n_commDeacv_Mode)
+```
+
+**Rationale**: the open-loop override generates its own synthetic angle and sinusoidal output — it does not rely on Hall sensor data after the initial angle seeding. Transient Hall errors (`z_errCode` bits 0/1) therefore have no effect on open-loop output quality and should not interrupt it. The true safety gates are:
+
+- `enable == 0` (cleared by the main loop on button press, timeout, or power-off) → MOE is immediately cleared AND open-loop exits.
+- `ABS(pwml) <= 50` → command removed.
+- `n_commDeacv_Mode == true` → FOC is now active; open-loop hands off.
+- DC-link overcurrent chopper (ISR, independent of open-loop).
+
+**Preserved safety**: `b_motEna` still reflects `enableFin` into the BLDC controller. If `z_errCode` fires and stays set, the BLDC controller outputs zero — but since we are in open-loop and overriding those outputs, this has no effect on motor drive. When open-loop exits (at FOC handoff), the BLDC controller takes over and any uncleared error will correctly suppress its output.
+
+### 8.5 Acceptance criteria (post-fix scope verification)
+
+With `olPh=2` and the wheel held:
+
+- **`tim8_moe` = 1 and `tim1_moe` = 1** in the CSV → inverter outputs enabled.
+- **`ccrUL ≠ ccrVL ≠ ccrWL`** (three different values) → differential duty applied.
+- **Phase-to-phase oscilloscope shows a PWM envelope** whose amplitude corresponds to `olVL` (~5% of battery voltage at `OPENLOOP_VOLTAGE_MAX = 700`) and whose frequency matches `olDthL` (≈1 Hz at ROTATE rate).
+- **No regression**: when `olPh=0` and `focL=1` (normal FOC operation), scope and CSV behavior are unchanged.
+
+---
+
+## 9. Baseline FOC Mode (`OPENLOOP_ENABLE` disabled)
+
+*Added 2026-03-08*
+
+### 9.1 Why we rolled back
+
+After the `enableFin`-gating fix (Section 8.3–8.4), the open-loop ROTATE phase was producing rotating `uL/vL/wL` commands and correct `tim8_moe=1` hardware gate state. However, we suspect the **core FOC Park/Clarke angle mapping may be wrong** (wrong sector mapping, 60° offset, or wrong commutation direction), which would make any further OPENLOOP→FOC handoff debugging misleading.
+
+Debugging a complex 3-stage sequence (ALIGN → ROTATE → handoff) when the underlying FOC geometry may be incorrect adds noise to the investigation. The decision was made to:
+
+1. **Disable `OPENLOOP_ENABLE`** — remove the ALIGN/ROTATE override from normal builds.
+2. **Enable `BASELINE_FOC_STANDSTILL_TEST`** — force FOC active even at 0 rpm, so we can directly observe what angle and currents the FOC controller uses when a torque command is issued at standstill.
+3. **Keep all debug infrastructure** — CSV columns, hardware gate snapshot, CCR logging remain unchanged. OL fields (`olPhL`, `olThL`, `olDthL`, `olVL`) are always 0 in this mode.
+
+### 9.2 What "baseline FOC" means in practice
+
+With `OPENLOOP_ENABLE` commented out and `BASELINE_FOC_STANDSTILL_TEST` defined:
+
+```
+At standstill (spdL = 0):
+  focL = 1               (FOC relay held active; n_commDeacvHi = n_commAcvLo = 0)
+  angL = rtY_Left.a_elecAngle   ← this IS the angle fed into the Park transform
+  phAL/phBL/phCL = BLDC controller outputs (no override; these ARE what drives the motor)
+  uL/vL/wL = phAL/phBL/phCL  (identical when OPENLOOP is not active)
+  olPhL = olThL = olDthL = olVL = 0  (always; OPENLOOP disabled)
+```
+
+The Hall-sector electrical angle is the sole source of `angL`. At standstill, this is the sector-centre angle (resolution of 60° electrical), updated only on Hall edges.
+
+### 9.3 How to use `angL` as the FOC angle diagnostic
+
+`angL` = `rtY_Left.a_elecAngle` is the output of the BLDC controller's **Hall-interpolated electrical angle estimator** (F04_Hall_Estimation subsystem). It is the angle actually fed into the Park transform (Park's θ input). It is *not* a direct sector-centre read; at speed it interpolates between edge timestamps.
+
+**At standstill**: angL holds the sector-centre value (one of six 60°-spaced values: ≈1920, 5760, 9600, 13440, 17280, 21120 in fixdt units). This directly shows which sector the Hall sensors report.
+
+**To verify correct angle**: manually rotate the wheel one full electrical revolution (6 Hall sectors). angL should sequence through all six sector-centre values in order. If it skips sectors or goes out of order, there is a Hall wiring or commutation direction issue.
+
+### 9.4 Compile-time flag summary
+
+| Flag | File | Effect when defined |
+|---|---|---|
+| `OPENLOOP_ENABLE` | `Inc/config.h` | Enables ALIGN→ROTATE→FOC state machine in bldc.c ISR. **Off by default.** |
+| `BASELINE_FOC_STANDSTILL_TEST` | `Inc/config.h` | Overrides `n_commDeacvHi=0` and `n_commAcvLo=0` in `BLDC_Init()` → FOC active from 0 rpm. **On by default.** |
+
+Both flags are independent. Combinations:
+
+| OPENLOOP_ENABLE | BASELINE_FOC_STANDSTILL_TEST | Behaviour |
+|---|---|---|
+| off | on | **Current default.** Baseline FOC from standstill; use to diagnose angle/torque. |
+| off | off | FOC activates at 2 rpm; 6-step below. Closest to upstream firmware behaviour. |
+| on | off | Full 3-stage startup (ALIGN→ROTATE→FOC at 2 rpm). |
+| on | on | 3-stage startup with FOC forced from 0 rpm after handoff; unusual combination. |
+
+### 9.5 OL column semantics when `OPENLOOP_ENABLE` is not defined
+
+| Column | Value | Meaning |
+|---|---|---|
+| `olPhL`, `olPhR` | always 0 | Open-loop inactive; no ALIGN/ROTATE in progress. |
+| `olThL`, `olThR` | always 0 | No synthetic angle generated; ignore. |
+| `olDthL`, `olDthR` | always 0 | No angle increment. |
+| `olVL`, `olVR` | always 0 | No open-loop voltage. |
+| `uL,vL,wL` | = `phAL/phBL/phCL` | Direct BLDC controller output; no override applied. |
+
+These columns are always present in the CSV header and data rows for schema consistency. Zero values in all four OL columns confirm `OPENLOOP_ENABLE` is off.
+
+### 9.6 Scope probing for baseline FOC standstill test
+
+See Section 8.2 for full measurement procedure. For this specific test:
+
+1. **Verify PWM is present at all**: probe phase-to-GND with a short timebase (~10 µs/div). You should see the 16 kHz PWM carrier. If the line is flat, check `tim8_moe` in the CSV (must be 1).
+
+2. **Verify differential voltage is non-zero**: probe phase-to-phase (U–V, V–W, or W–U). With `cmdL > 50` and FOC active, the three phases should have different duty cycles → a non-zero differential envelope. If flat, check `ccrUL ≠ ccrVL ≠ ccrWL` in the CSV; if all three are equal (all 1000), the commanded duty is 50/50/50 → zero torque even though MOE=1.
+
+3. **Verify torque direction matches command**: increasing `cmdL` should produce a rising iq current (visible in `cABL/cBCL`). If current does not change or flows in the wrong direction, the angle mapping is likely wrong.
+
+4. **Key acceptance criterion**: with `cmdL = 100` and the wheel held static, the motor should produce a measurable holding torque. If it vibrates or buzzes without holding, the angle is likely shifted by one or more sectors.

@@ -67,6 +67,13 @@ Protocol (little-endian, all fields 2 bytes):
           olVL          left open-loop voltage amplitude
           uL,vL,wL      left final applied PWM commands written to timer CCRs (post OPENLOOP override)
           (hallR..wR)   same set for right motor
+          tim8_moe      LEFT  motor (TIM8) BDTR.MOE bit: 1=PWM outputs enabled, 0=gated off
+          tim1_moe      RIGHT motor (TIM1) BDTR.MOE bit: 1=PWM outputs enabled, 0=gated off
+          ccer8         LEFT  motor TIM8 CCER channel-enable mask (bits[11:0]; expected 0xAAA after init)
+          ccer1         RIGHT motor TIM1 CCER channel-enable mask
+          enaFin        firmware enableFin flag: enable && !errCodeL && !errCodeR (1=motors commanded, 0=suppressed)
+          ccrUL..ccrWL  LEFT  motor timer CCR compare values written this cycle [0..2000]
+          ccrUR..ccrWR  RIGHT motor timer CCR compare values written this cycle [0..2000]
 
 Usage:
     python3 uart_control_test.py --control_port /dev/ttyUSB0 \\
@@ -225,7 +232,9 @@ def debug_reader(ser: serial.Serial, log_path: str) -> None:
         "hallL,angL,spdL,phAL,phBL,phCL,iqL,idL,cABL,cBCL,dcL,errL,"
         "olPhL,olThL,olDthL,olVL,uL,vL,wL,"
         "hallR,angR,spdR,phAR,phBR,phCR,iqR,idR,cABR,cBCR,dcR,errR,"
-        "olPhR,olThR,olDthR,olVR,uR,vR,wR"
+        "olPhR,olThR,olDthR,olVR,uR,vR,wR,"
+        "tim8_moe,tim1_moe,ccer8,ccer1,enaFin,"
+        "ccrUL,ccrVL,ccrWL,ccrUR,ccrVR,ccrWR"
     )
     line_buf = b""
     with open(log_path, "w", buffering=1) as log_file:

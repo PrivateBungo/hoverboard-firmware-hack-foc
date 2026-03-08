@@ -59,6 +59,10 @@ static int16_t pwm_margin;              /* This margin allows to have a window i
 volatile AppliedPwm3 dbg_applied_pwm_L = {0};
 volatile AppliedPwm3 dbg_applied_pwm_R = {0};
 
+/* Hardware gating / enable state snapshot captured at the moment of CCR writes.
+ * Written in the ISR, read by the main-loop CSV path. */
+volatile HwGateSnapshot dbg_hw_gate = {0};
+
 extern uint8_t ctrlModReq;
 static int16_t curDC_max = (I_DC_MAX * A2BIT_CONV);
 int16_t curL_phaA = 0, curL_phaB = 0, curL_DC = 0;
@@ -233,7 +237,7 @@ void DMA1_Channel1_IRQHandler(void) {
 
 #ifdef OPENLOOP_ENABLE
     /* Open-loop sinusoidal startup override for left motor */
-    if (olStateL.phase == 0 && enableFin && ABS(pwml) > 50 && !rtDW_Left.n_commDeacv_Mode) {
+    if (olStateL.phase == 0 && enable && ABS(pwml) > 50 && !rtDW_Left.n_commDeacv_Mode) {
       /* Start open-loop: initialise angle from current hall sector */
       int16_t hallValue_l = (int16_t)((hall_ul << 2) | (hall_vl << 1) | hall_wl);
       int8_t  sector_l    = rtConstP.vec_hallToPos_Value[hallValue_l];
@@ -245,8 +249,12 @@ void DMA1_Channel1_IRQHandler(void) {
     }
 
     if (olStateL.phase > 0) {
-      if (!enableFin || ABS(pwml) <= 50 || rtDW_Left.n_commDeacv_Mode) {
-        /* Exit condition: FOC active, motor disabled, or command removed */
+      if (!enable || ABS(pwml) <= 50 || rtDW_Left.n_commDeacv_Mode) {
+        /* Exit condition: FOC active, hardware enable cleared, or command removed.
+         * Note: uses `enable` (not `enableFin`) so that transient z_errCode events
+         * (Hall-000/111 glitches) do not prematurely terminate open-loop.  The
+         * hardware safety gate (MOE, cleared when enable==0) provides the real
+         * protection. */
         olStateL.phase       = 0;
         olStateL.counter     = 0;
         olStateL.voltage     = 0;
@@ -338,7 +346,7 @@ void DMA1_Channel1_IRQHandler(void) {
 
 #ifdef OPENLOOP_ENABLE
     /* Open-loop sinusoidal startup override for right motor */
-    if (olStateR.phase == 0 && enableFin && ABS(pwmr) > 50 && !rtDW_Right.n_commDeacv_Mode) {
+    if (olStateR.phase == 0 && enable && ABS(pwmr) > 50 && !rtDW_Right.n_commDeacv_Mode) {
       /* Start open-loop: initialise angle from current hall sector */
       int16_t hallValue_r = (int16_t)((hall_ur << 2) | (hall_vr << 1) | hall_wr);
       int8_t  sector_r    = rtConstP.vec_hallToPos_Value[hallValue_r];
@@ -350,8 +358,9 @@ void DMA1_Channel1_IRQHandler(void) {
     }
 
     if (olStateR.phase > 0) {
-      if (!enableFin || ABS(pwmr) <= 50 || rtDW_Right.n_commDeacv_Mode) {
-        /* Exit condition: FOC active, motor disabled, or command removed */
+      if (!enable || ABS(pwmr) <= 50 || rtDW_Right.n_commDeacv_Mode) {
+        /* Exit condition: FOC active, hardware enable cleared, or command removed.
+         * Uses `enable` (not `enableFin`) — see left motor comment above. */
         olStateR.phase       = 0;
         olStateR.counter     = 0;
         olStateR.voltage     = 0;
@@ -404,6 +413,23 @@ void DMA1_Channel1_IRQHandler(void) {
     RIGHT_TIM->RIGHT_TIM_V  = (uint16_t)CLAMP(vr + pwm_res / 2, pwm_margin, pwm_res-pwm_margin);
     RIGHT_TIM->RIGHT_TIM_W  = (uint16_t)CLAMP(wr + pwm_res / 2, pwm_margin, pwm_res-pwm_margin);
   // =================================================================
+
+  /* Capture hardware gating / enable state for CSV debug logging.
+   * Taken after both motors' CCR writes so the snapshot is consistent.
+   * MOE is the critical bit: 0 means no PWM reaches the motor regardless
+   * of the CCR values. */
+  dbg_hw_gate.moe_l    = (uint8_t)((LEFT_TIM->BDTR  >> 15) & 1U);
+  dbg_hw_gate.moe_r    = (uint8_t)((RIGHT_TIM->BDTR >> 15) & 1U);
+  dbg_hw_gate.ccer_l   = (uint16_t)(LEFT_TIM->CCER  & 0x0FFFU);
+  dbg_hw_gate.ccer_r   = (uint16_t)(RIGHT_TIM->CCER & 0x0FFFU);
+  dbg_hw_gate.enable   = enable;
+  dbg_hw_gate.enableFin = enableFin;
+  dbg_hw_gate.ccr_ul   = LEFT_TIM->LEFT_TIM_U;
+  dbg_hw_gate.ccr_vl   = LEFT_TIM->LEFT_TIM_V;
+  dbg_hw_gate.ccr_wl   = LEFT_TIM->LEFT_TIM_W;
+  dbg_hw_gate.ccr_ur   = RIGHT_TIM->RIGHT_TIM_U;
+  dbg_hw_gate.ccr_vr   = RIGHT_TIM->RIGHT_TIM_V;
+  dbg_hw_gate.ccr_wr   = RIGHT_TIM->RIGHT_TIM_W;
 
   /* Indicate task complete */
   OverrunFlag = false;

@@ -257,6 +257,16 @@ void BLDC_Init(void) {
   // Using z_maxCntRst+2 rather than a hard-coded 2002 makes the relationship explicit.
   rtP_Left.dz_cntTrnsDetHi      = rtP_Left.z_maxCntRst + 2;            // effectively disables transition-detection
 
+#ifdef BASELINE_FOC_STANDSTILL_TEST
+  // Force FOC active from 0 rpm: n_commDeacvHi=0 means the relay trips to FOC as soon as
+  // Abs5 >= 0 (always true), and n_commAcvLo=0 means it only reverts to 6-step at true
+  // zero speed. Combined with dz_cntTrnsDetHi already disabling the transition-detection
+  // relay, FOC runs from the very first ISR cycle regardless of Hall-derived speed.
+  // angL (rtY_Left.a_elecAngle) in the CSV is the angle fed into the Park transform.
+  rtP_Left.n_commDeacvHi        = 0;                                    // FOC active at 0 rpm (always on)
+  rtP_Left.n_commAcvLo          = 0;                                    // 6-step only at true 0 rpm
+#endif
+
   rtP_Right                     = rtP_Left;     // Copy the Left motor parameters to the Right motor parameters
   rtP_Right.z_selPhaCurMeasABC  = 1;            // Right motor measured current phases {Blue, Yellow} = {iB, iC} -> do NOT change
 

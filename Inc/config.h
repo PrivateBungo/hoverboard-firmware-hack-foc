@@ -170,11 +170,22 @@
 // #define ELECTRIC_BRAKE_THRES  120       // (0, 500) Threshold below at which the electric brake starts engaging.
 
 // Open-loop startup for smooth cold-start (eliminates electromagnetic lock at standstill)
-#define OPENLOOP_ENABLE                     // [-] Enable open-loop sinusoidal startup. Comment-out to disable.
+// NOTE: OPENLOOP_ENABLE is disabled (commented out) by default. The 3-stage ALIGN→ROTATE→FOC
+// handoff mechanism is suspected to have angle/timing issues. Use BASELINE_FOC_STANDSTILL_TEST
+// (below) to test pure FOC from standstill instead. Re-enable OPENLOOP_ENABLE once the core
+// FOC angle mapping is validated.
+// #define OPENLOOP_ENABLE                  // [-] Enable open-loop sinusoidal startup. Comment-out to disable.
 #define OPENLOOP_VOLTAGE_MAX    700         // [-] Maximum voltage amplitude during open-loop (0-16000). ~5% duty cycle.
 #define OPENLOOP_ALIGN_DURATION 3200        // [-] Align phase duration in ISR cycles. 3200 = 0.2 sec at 16 kHz.
 #define OPENLOOP_ACCEL_DURATION 16000       // [-] Acceleration ramp duration in ISR cycles. 16000 = 1.0 sec at 16 kHz.
 #define OPENLOOP_DELTA_THETA_MAX 36         // [-] Max angle increment per cycle. 36 ≈ 100 RPM mechanical with 15 pole pairs.
+
+// Baseline FOC standstill test: forces FOC active from 0 rpm by setting n_commDeacvHi=n_commAcvLo=0.
+// With FOC always active, the BLDC controller applies Park/Clarke directly from the Hall-sector
+// electrical angle even at standstill. Use this to verify static torque generation before
+// re-introducing the open-loop startup sequence.
+// angL in the CSV (rtY_Left.a_elecAngle) is the angle actually fed into the Park transform.
+#define BASELINE_FOC_STANDSTILL_TEST        // [-] Enable to force FOC from standstill. Comment-out to use normal thresholds.
 // ########################### END OF MOTOR CONTROL ########################
 
 
