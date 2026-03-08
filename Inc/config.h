@@ -169,6 +169,16 @@
 // #define ELECTRIC_BRAKE_MAX    100       // (0, 500) Maximum electric brake to be applied when input torque request is 0 (pedal fully released).
 // #define ELECTRIC_BRAKE_THRES  120       // (0, 500) Threshold below at which the electric brake starts engaging.
 
+// Stall-decay (soft stall pre-emption)
+#define STALL_DECAY_IN_TRQ_MODE     1
+#define STALL_DECAY_IN_VLT_MODE     1
+#define STALL_DECAY_SPEED_RPM       8
+#define STALL_DECAY_CMD_TRIGGER     600
+#define STALL_DECAY_PREEMPT_MS      40
+#define STALL_DECAY_CMD_PREEMPT     550
+#define STALL_DECAY_CMD_FLOOR       250
+#define STALL_DECAY_TIME_MS         90
+
 // Open-loop startup for smooth cold-start (eliminates electromagnetic lock at standstill)
 #define OPENLOOP_ENABLE                     // [-] Enable open-loop sinusoidal startup. Comment-out to disable.
 #define OPENLOOP_VOLTAGE_MAX    700         // [-] Maximum voltage amplitude during open-loop (0-16000). ~5% duty cycle.
@@ -809,4 +819,3 @@
 // ############################# END OF VALIDATE SETTINGS ############################
 
 #endif
-

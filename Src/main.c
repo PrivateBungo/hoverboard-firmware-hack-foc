@@ -31,6 +31,7 @@
 #include "rtwtypes.h"
 #include "comms.h"
 #include "openloop_debug.h"
+#include "drive_control.h"
 
 #if defined(DEBUG_I2C_LCD) || defined(SUPPORT_LCD)
 #include "hd44780.h"
@@ -88,6 +89,10 @@ extern volatile int pwml;               // global variable for pwm left. -1000 t
 extern volatile int pwmr;               // global variable for pwm right. -1000 to 1000
 
 extern uint8_t enable;                  // global variable for motor enable
+extern uint8_t ctrlModReq;              // final control mode request
+extern volatile uint8_t g_errCodeLeftEffective;
+extern volatile uint8_t g_errCodeRightEffective;
+extern volatile uint8_t g_stallRecoveryActive;
 
 extern int16_t batVoltage;              // global variable for battery voltage
 
@@ -119,6 +124,8 @@ int16_t right_dc_curr;           // global variable for Right DC Link current
 int16_t dc_curr;                 // global variable for Total DC Link current 
 int16_t cmdL;                    // global variable for Left Command 
 int16_t cmdR;                    // global variable for Right Command 
+int16_t cmdL_raw;                // pre-soft-gate left command for debug CSV
+int16_t cmdR_raw;                // pre-soft-gate right command for debug CSV
 
 //------------------------------------------------------------------------
 // Local variables
@@ -170,6 +177,9 @@ static uint32_t    inactivity_timeout_counter;
 static MultipleTap MultipleTapBrake;    // define multiple tap functionality for the Brake pedal
 
 static uint16_t rate = RATE; // Adjustable rate to support multiple drive modes on startup
+
+static DriveControlStallDecayState stallDecayL = {0};
+static DriveControlStallDecayState stallDecayR = {0};
 
 #ifdef MULTI_MODE_DRIVE
   static uint8_t drive_mode;
@@ -263,7 +273,7 @@ int main(void) {
 
     #ifndef VARIANT_TRANSPOTTER
       // ####### MOTOR ENABLING: Only if the initial input is very small (for SAFETY) #######
-      if (enable == 0 && !rtY_Left.z_errCode && !rtY_Right.z_errCode && 
+      if (enable == 0 && !g_errCodeLeftEffective && !g_errCodeRightEffective && 
           ABS(input1[inIdx].cmd) < 50 && ABS(input2[inIdx].cmd) < 50){
         beepShort(6);                     // make 2 beeps indicating the motor enable
         beepShort(4); HAL_Delay(100);
@@ -357,6 +367,12 @@ int main(void) {
         mixerFcn(speed << 4, steer << 4, &cmdR, &cmdL);   // This function implements the equations above
       #endif
 
+      cmdL_raw = cmdL;
+      cmdR_raw = cmdR;
+
+      // ####### STALL TORQUE DECAY #######
+      cmdL = DriveControl_ApplyStallDecay(cmdL, rtY_Left.n_mot, ctrlModReq, &stallDecayL);
+      cmdR = DriveControl_ApplyStallDecay(cmdR, rtY_Right.n_mot, ctrlModReq, &stallDecayR);
 
       // ####### SET OUTPUTS (if the target change is less than +/- 100) #######
       #ifdef INVERT_R_DIRECTION
@@ -525,7 +541,8 @@ int main(void) {
           //   (hallR..wR)   : same set for right motor
           static uint8_t csv_header_sent = 0;
           if (!csv_header_sent) {
-            printf("t_ms,cmdL,cmdR,cModReq,cModActL,cModActR,focL,focR,"
+            printf("t_ms,cmdL,cmdR,cmdLRaw,cmdRRaw,cModReq,cModActL,cModActR,focL,focR,"
+                   "hStall,softCondL,softActL,softCondR,softActR,"
                    "hallL,angL,spdL,phAL,phBL,phCL,iqL,idL,cABL,cBCL,dcL,errL,"
                    "olPhL,olThL,olDthL,olVL,uL,vL,wL,"
                    "hallR,angR,spdR,phAR,phBR,phCR,iqR,idR,cABR,cBCR,dcR,errR,"
@@ -537,18 +554,25 @@ int main(void) {
           #ifdef OPENLOOP_ENABLE
           openloop_get_snapshot(&olSnap_L, &olSnap_R);
           #endif
-          printf("%lu,%d,%d,%d,%d,%d,%d,%d,"
+          printf("%lu,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
+                 "%d,%d,%d,%d,%d,"
                  "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
                  "%d,%d,%d,%d,%d,%d,%d,"
                  "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
                  "%d,%d,%d,%d,%d,%d,%d\r\n",
             (unsigned long)(main_loop_counter * DELAY_IN_MAIN_LOOP),          // t_ms
-            (int)cmdL, (int)cmdR,                                              // cmdL,cmdR
+            (int)cmdL, (int)cmdR,                                              // cmdL,cmdR post-gate
+            (int)cmdL_raw, (int)cmdR_raw,                                      // cmdLRaw,cmdRRaw pre-gate
             (int)rtU_Left.z_ctrlModReq,                                        // cModReq  – requested mode (same for both motors)
             (int)rtDW_Left.z_ctrlMod,                                          // cModActL – actual applied left mode (may be forced OPEN on fault)
             (int)rtDW_Right.z_ctrlMod,                                         // cModActR – actual applied right mode
             (int)rtDW_Left.n_commDeacv_Mode,                                   // focL (0=6-step, 1=FOC)
             (int)rtDW_Right.n_commDeacv_Mode,                                  // focR
+            (int)g_stallRecoveryActive,                                       // hStall
+            (int)stallDecayL.stallCondition,                                   // softCondL
+            (int)stallDecayL.stallActive,                                      // softActL
+            (int)stallDecayR.stallCondition,                                   // softCondR
+            (int)stallDecayR.stallActive,                                      // softActR
             // ── Left motor ──────────────────────────────────────────────────────
             (int)(rtU_Left.b_hallA * 4 + rtU_Left.b_hallB * 2 + rtU_Left.b_hallC), // hallL
             (int)rtY_Left.a_elecAngle,  // angL
@@ -561,7 +585,7 @@ int main(void) {
             (int)rtU_Left.i_phaAB,      // cABL
             (int)rtU_Left.i_phaBC,      // cBCL
             (int)rtU_Left.i_DCLink,     // dcL
-            (int)rtY_Left.z_errCode,    // errL
+            (int)g_errCodeLeftEffective, // errL
             // ── Left open-loop state (zeros when OPENLOOP_ENABLE not defined) ──
             (int)olSnap_L.phase,        // olPhL
             (int)olSnap_L.theta,        // olThL
@@ -583,7 +607,7 @@ int main(void) {
             (int)rtU_Right.i_phaAB,     // cABR
             (int)rtU_Right.i_phaBC,     // cBCR
             (int)rtU_Right.i_DCLink,    // dcR
-            (int)rtY_Right.z_errCode,   // errR
+            (int)g_errCodeRightEffective,// errR
             // ── Right open-loop state (zeros when OPENLOOP_ENABLE not defined) ─
             (int)olSnap_R.phase,        // olPhR
             (int)olSnap_R.theta,        // olThR
@@ -643,7 +667,7 @@ int main(void) {
         printf("# Powering off: battery voltage too low\r\n");
       #endif
       poweroff();
-    } else if (rtY_Left.z_errCode || rtY_Right.z_errCode) {                                           // 1 beep (low pitch): Motor error, disable motors
+    } else if (g_errCodeLeftEffective || g_errCodeRightEffective) {                                   // 1 beep (low pitch): Motor error, disable motors
       enable = 0;
       beepCount(1, 24, 1);
     } else if (timeoutFlgADC) {                                                                       // 2 beeps (low pitch): ADC timeout

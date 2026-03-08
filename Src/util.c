@@ -89,6 +89,9 @@ ExtU     rtU_Right;                     /* External inputs */
 ExtY     rtY_Right;                     /* External outputs */
 //---------------
 
+extern volatile uint8_t g_errCodeLeftEffective;
+extern volatile uint8_t g_errCodeRightEffective;
+
 uint8_t  inIdx      = 0;
 uint8_t  inIdx_prev = 0;
 #if defined(PRI_INPUT1) && defined(PRI_INPUT2) && defined(AUX_INPUT1) && defined(AUX_INPUT2)
@@ -244,9 +247,8 @@ void BLDC_Init(void) {
   rtP_Left.r_fieldWeakLo        = FIELD_WEAK_LO << 4;                   // fixdt(1,16,4)
 
   // FOC startup overrides (default values in BLDC_controller_data.c are too conservative)
-  // Disable standstill detection latch: with n_stdStillDet=0, Abs5 < 0 is never true so
-  // errCode bit2 (=4) cannot latch even when the motor is stalled and PI winds up.
-  rtP_Left.n_stdStillDet        = 0;
+  // Keep standstill detection active (3 rpm) so hard-stall protection still works.
+  rtP_Left.n_stdStillDet        = 3 << 4;                              // fixdt(1,16,4)
   // Lower FOC activation / 6-step deactivation thresholds so FOC engages almost immediately
   // (defaults: n_commDeacvHi=480=30rpm, n_commAcvLo=240=15rpm).
   rtP_Left.n_commDeacvHi        = 2 << 4;                               // fixdt(1,16,4): FOC activates at 2 rpm
@@ -1427,7 +1429,7 @@ void sideboardLeds(uint8_t *leds) {
     // Error handling
     // Critical error:  LED1 on (RED)     + high pitch beep (hadled in main)
     // Soft error:      LED3 on (YELLOW)  + low  pitch beep (hadled in main)
-    if (rtY_Left.z_errCode || rtY_Right.z_errCode) {
+    if (g_errCodeLeftEffective || g_errCodeRightEffective) {
       *leds |= LED1_SET;
       *leds &= ~LED3_SET & ~LED2_SET;
     }

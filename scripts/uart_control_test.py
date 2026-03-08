@@ -213,25 +213,34 @@ def debug_reader(ser: serial.Serial, log_path: str) -> None:
     them to *log_path*.  Lines starting with '#' are diagnostic comments and are
     also printed to stdout so they are visible during a live run.
 
-    The script writes the expected CSV header as the very first line of the file
-    so that the log is always well-formed even if the board never sends its own
-    header (e.g. the board was already running when capture started).  If the
-    firmware subsequently sends its own header (a line starting with ``t_ms,``),
-    that duplicate is silently dropped from the file.
+    The logger captures the firmware's CSV header dynamically (line starting
+    with ``t_ms,``). If data lines arrive before header, it synthesizes a
+    fallback header from the detected column count so captures stay analyzable.
     """
-    # Expected CSV header – must match the firmware printf in Src/main.c.
-    CSV_HEADER = (
-        "t_ms,cmdL,cmdR,cModReq,cModActL,cModActR,focL,focR,"
-        "hallL,angL,spdL,phAL,phBL,phCL,iqL,idL,cABL,cBCL,dcL,errL,"
-        "olPhL,olThL,olDthL,olVL,uL,vL,wL,"
-        "hallR,angR,spdR,phAR,phBR,phCR,iqR,idR,cABR,cBCR,dcR,errR,"
-        "olPhR,olThR,olDthR,olVR,uR,vR,wR"
-    )
+    fallback_headers = {
+        # Current firmware format with soft/hard stall telemetry.
+        53: (
+            "t_ms,cmdL,cmdR,cmdLRaw,cmdRRaw,cModReq,cModActL,cModActR,focL,focR,"
+            "hStall,softCondL,softActL,softCondR,softActR,"
+            "hallL,angL,spdL,phAL,phBL,phCL,iqL,idL,cABL,cBCL,dcL,errL,"
+            "olPhL,olThL,olDthL,olVL,uL,vL,wL,"
+            "hallR,angR,spdR,phAR,phBR,phCR,iqR,idR,cABR,cBCR,dcR,errR,"
+            "olPhR,olThR,olDthR,olVR,uR,vR,wR"
+        ),
+        # Legacy firmware format before stall telemetry columns were added.
+        46: (
+            "t_ms,cmdL,cmdR,cModReq,cModActL,cModActR,focL,focR,"
+            "hallL,angL,spdL,phAL,phBL,phCL,iqL,idL,cABL,cBCL,dcL,errL,"
+            "olPhL,olThL,olDthL,olVL,uL,vL,wL,"
+            "hallR,angR,spdR,phAR,phBR,phCR,iqR,idR,cABR,cBCR,dcR,errR,"
+            "olPhR,olThR,olDthR,olVR,uR,vR,wR"
+        ),
+    }
+
     line_buf = b""
+    header_written = False
     with open(log_path, "w", buffering=1) as log_file:
         print(f"[DBG] Logging CSV debug output to: {log_path}", flush=True)
-        # Always write the header first so the file is well-formed from the start.
-        log_file.write(CSV_HEADER + "\n")
         while not _stop_event.is_set():
             try:
                 chunk = ser.read(ser.in_waiting or 1)
@@ -243,10 +252,23 @@ def debug_reader(ser: serial.Serial, log_path: str) -> None:
             while b"\n" in line_buf:
                 line, line_buf = line_buf.split(b"\n", 1)
                 decoded = line.rstrip(b"\r").decode("ascii", errors="replace")
-                # Skip firmware header if script already wrote one (avoid duplicate).
                 if decoded.startswith("t_ms,"):
+                    if not header_written:
+                        log_file.write(decoded + "\n")
+                        header_written = True
                     print(f"[DBG] {decoded}", flush=True)
                     continue
+                if (not header_written) and decoded and (not decoded.startswith("#")):
+                    col_count = len(decoded.split(","))
+                    fallback = fallback_headers.get(col_count)
+                    if fallback is None:
+                        fallback = ",".join(f"col{i}" for i in range(col_count))
+                    log_file.write(fallback + "\n")
+                    header_written = True
+                    print(
+                        f"[DBG] Warning: CSV header missing; synthesized fallback header for {col_count} columns",
+                        flush=True,
+                    )
                 log_file.write(decoded + "\n")
                 # Echo comment lines to stdout for visibility.
                 if decoded.startswith("#"):

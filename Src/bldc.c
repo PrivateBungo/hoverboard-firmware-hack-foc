@@ -79,6 +79,24 @@ static uint8_t  buzzerIdx   = 0;
 uint8_t        enable       = 0;        // initially motors are disabled for SAFETY
 static uint8_t enableFin    = 0;
 
+#define STALL_ERR_BIT                0x04U
+#define STALL_RECOVERY_DELAY_MS      10000U
+#define STALL_NEUTRAL_PWM_DEADBAND   300
+
+volatile uint8_t g_errCodeLeftEffective  = 0;
+volatile uint8_t g_errCodeRightEffective = 0;
+volatile uint8_t g_stallRecoveryActive   = 0;
+
+static uint8_t  stallRecoveryActive = 0;
+static uint32_t stallRecoverAtMs = 0;
+
+static void clear_stall_latch(void) {
+  rtDW_Left.UnitDelay_DSTATE_e  &= (uint8_T)(~STALL_ERR_BIT);
+  rtDW_Right.UnitDelay_DSTATE_e &= (uint8_T)(~STALL_ERR_BIT);
+  rtY_Left.z_errCode  &= (uint8_T)(~STALL_ERR_BIT);
+  rtY_Right.z_errCode &= (uint8_T)(~STALL_ERR_BIT);
+}
+
 static const uint16_t pwm_res  = 64000000 / 2 / PWM_FREQ; // = 2000
 
 static uint16_t offsetcount = 0;
@@ -197,8 +215,39 @@ void DMA1_Channel1_IRQHandler(void) {
   }
   OverrunFlag = true;
 
+  const uint32_t nowMs = HAL_GetTick();
+  const uint8_t rawErrL = rtY_Left.z_errCode;
+  const uint8_t rawErrR = rtY_Right.z_errCode;
+  const uint8_t rawStallActive = ((rawErrL & STALL_ERR_BIT) || (rawErrR & STALL_ERR_BIT));
+
+  if (rawStallActive && !stallRecoveryActive) {
+    stallRecoveryActive = 1;
+    stallRecoverAtMs = nowMs + STALL_RECOVERY_DELAY_MS;
+  }
+
+  uint8_t errL_eff = rawErrL;
+  uint8_t errR_eff = rawErrR;
+
+  if (stallRecoveryActive) {
+    const uint8_t timeElapsed = ((int32_t)(nowMs - stallRecoverAtMs) >= 0);
+    const uint8_t neutralCmd = (ABS(pwml) <= STALL_NEUTRAL_PWM_DEADBAND) && (ABS(pwmr) <= STALL_NEUTRAL_PWM_DEADBAND);
+
+    if (timeElapsed && neutralCmd) {
+      clear_stall_latch();
+      errL_eff &= (uint8_t)(~STALL_ERR_BIT);
+      errR_eff &= (uint8_t)(~STALL_ERR_BIT);
+      if (!rawStallActive) {
+        stallRecoveryActive = 0;
+      }
+    }
+  }
+
+  g_errCodeLeftEffective = errL_eff;
+  g_errCodeRightEffective = errR_eff;
+  g_stallRecoveryActive = stallRecoveryActive;
+
   /* Make sure to stop BOTH motors in case of an error */
-  enableFin = enable && !rtY_Left.z_errCode && !rtY_Right.z_errCode;
+  enableFin = enable && !stallRecoveryActive && !g_errCodeLeftEffective && !g_errCodeRightEffective;
  
   // ========================= LEFT MOTOR ============================ 
     // Get hall sensors values
@@ -406,6 +455,18 @@ void DMA1_Channel1_IRQHandler(void) {
   // =================================================================
 
   /* Indicate task complete */
+  {
+    uint8_t errL_eff_now = rtY_Left.z_errCode;
+    uint8_t errR_eff_now = rtY_Right.z_errCode;
+    if (stallRecoveryActive) {
+      errL_eff_now &= (uint8_t)(~STALL_ERR_BIT);
+      errR_eff_now &= (uint8_t)(~STALL_ERR_BIT);
+    }
+    g_errCodeLeftEffective = errL_eff_now;
+    g_errCodeRightEffective = errR_eff_now;
+    g_stallRecoveryActive = stallRecoveryActive;
+  }
+
   OverrunFlag = false;
  
  // ###############################################################################
