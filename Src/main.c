@@ -120,6 +120,8 @@ int16_t right_dc_curr;           // global variable for Right DC Link current
 int16_t dc_curr;                 // global variable for Total DC Link current 
 int16_t cmdL;                    // global variable for Left Command 
 int16_t cmdR;                    // global variable for Right Command 
+int16_t cmdL_raw;                // pre-soft-gate left command for debug CSV
+int16_t cmdR_raw;                // pre-soft-gate right command for debug CSV
 
 //------------------------------------------------------------------------
 // Local variables
@@ -185,6 +187,8 @@ static uint32_t softStallSinceTickL;
 static uint32_t softStallSinceTickR;
 static uint8_t  softStallActiveL;
 static uint8_t  softStallActiveR;
+static uint8_t  softStallCondL;
+static uint8_t  softStallCondR;
 
 static void clearHardStallLatch(DW *rtDW, ExtY *rtY) {
   rtDW->UnitDelay_DSTATE_e &= (uint8_t)(~STALL_ERR_MASK);
@@ -192,13 +196,14 @@ static void clearHardStallLatch(DW *rtDW, ExtY *rtY) {
   rtDW->Merge_p = false;
 }
 
-static void softStallGate(int *pwmCmd, int16_t motorSpeed, uint32_t now, uint32_t *sinceTick, uint8_t *stallActive) {
+static void softStallGate(int *pwmCmd, int16_t motorSpeed, uint32_t now, uint32_t *sinceTick, uint8_t *stallActive, uint8_t *stallCond) {
   const int16_t speedThreshold = SOFT_STALL_SPEED_RPM;
   const int16_t torqueThreshold = rtP_Left.r_errInpTgtThres;
   const int16_t torqueTrigger = (int16_t)(((int32_t)torqueThreshold * SOFT_STALL_TORQUE_TRIG_PCT) / 100);
   const int16_t safeTorque = (int16_t)(((int32_t)torqueThreshold * SOFT_STALL_TORQUE_SAFE_PCT) / 100);
 
   const uint8_t stallCondition = (ABS(motorSpeed) <= speedThreshold) && (ABS(*pwmCmd) >= torqueTrigger);
+  *stallCond = stallCondition;
 
   if (stallCondition) {
     if (*sinceTick == 0U) {
@@ -412,15 +417,20 @@ int main(void) {
         mixerFcn(speed << 4, steer << 4, &cmdR, &cmdL);   // This function implements the equations above
       #endif
 
+      cmdL_raw = cmdL;
+      cmdR_raw = cmdR;
+
       // ####### STALL TORQUE SOFT GATE #######
       if (ctrlModReq == TRQ_MODE) {
-        softStallGate(&cmdL, rtY_Left.n_mot, nowMs, &softStallSinceTickL, &softStallActiveL);
-        softStallGate(&cmdR, rtY_Right.n_mot, nowMs, &softStallSinceTickR, &softStallActiveR);
+        softStallGate(&cmdL, rtY_Left.n_mot, nowMs, &softStallSinceTickL, &softStallActiveL, &softStallCondL);
+        softStallGate(&cmdR, rtY_Right.n_mot, nowMs, &softStallSinceTickR, &softStallActiveR, &softStallCondR);
       } else {
         softStallSinceTickL = 0;
         softStallSinceTickR = 0;
         softStallActiveL = 0;
         softStallActiveR = 0;
+        softStallCondL = 0;
+        softStallCondR = 0;
       }
 
       // ####### SET OUTPUTS (if the target change is less than +/- 100) #######
@@ -590,7 +600,8 @@ int main(void) {
           //   (hallR..wR)   : same set for right motor
           static uint8_t csv_header_sent = 0;
           if (!csv_header_sent) {
-            printf("t_ms,cmdL,cmdR,cModReq,cModActL,cModActR,focL,focR,"
+            printf("t_ms,cmdL,cmdR,cmdLRaw,cmdRRaw,cModReq,cModActL,cModActR,focL,focR,"
+                   "hStall,softCondL,softActL,softCondR,softActR,"
                    "hallL,angL,spdL,phAL,phBL,phCL,iqL,idL,cABL,cBCL,dcL,errL,"
                    "olPhL,olThL,olDthL,olVL,uL,vL,wL,"
                    "hallR,angR,spdR,phAR,phBR,phCR,iqR,idR,cABR,cBCR,dcR,errR,"
@@ -602,18 +613,25 @@ int main(void) {
           #ifdef OPENLOOP_ENABLE
           openloop_get_snapshot(&olSnap_L, &olSnap_R);
           #endif
-          printf("%lu,%d,%d,%d,%d,%d,%d,%d,"
+          printf("%lu,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
+                 "%d,%d,%d,%d,%d,"
                  "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
                  "%d,%d,%d,%d,%d,%d,%d,"
                  "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,"
                  "%d,%d,%d,%d,%d,%d,%d\r\n",
             (unsigned long)(main_loop_counter * DELAY_IN_MAIN_LOOP),          // t_ms
-            (int)cmdL, (int)cmdR,                                              // cmdL,cmdR
+            (int)cmdL, (int)cmdR,                                              // cmdL,cmdR post-gate
+            (int)cmdL_raw, (int)cmdR_raw,                                      // cmdLRaw,cmdRRaw pre-gate
             (int)rtU_Left.z_ctrlModReq,                                        // cModReq  – requested mode (same for both motors)
             (int)rtDW_Left.z_ctrlMod,                                          // cModActL – actual applied left mode (may be forced OPEN on fault)
             (int)rtDW_Right.z_ctrlMod,                                         // cModActR – actual applied right mode
             (int)rtDW_Left.n_commDeacv_Mode,                                   // focL (0=6-step, 1=FOC)
             (int)rtDW_Right.n_commDeacv_Mode,                                  // focR
+            (int)hardStallPauseActive,                                         // hStall
+            (int)softStallCondL,                                               // softCondL
+            (int)softStallActiveL,                                             // softActL
+            (int)softStallCondR,                                               // softCondR
+            (int)softStallActiveR,                                             // softActR
             // ── Left motor ──────────────────────────────────────────────────────
             (int)(rtU_Left.b_hallA * 4 + rtU_Left.b_hallB * 2 + rtU_Left.b_hallC), // hallL
             (int)rtY_Left.a_elecAngle,  // angL
