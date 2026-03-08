@@ -171,6 +171,48 @@ static MultipleTap MultipleTapBrake;    // define multiple tap functionality for
 
 static uint16_t rate = RATE; // Adjustable rate to support multiple drive modes on startup
 
+#define STALL_ERR_MASK               4U
+#define HARD_STALL_PAUSE_MS          5000U
+#define SOFT_STALL_DETECT_MS         500U
+#define SOFT_STALL_TORQUE_MARGIN     20
+
+static uint8_t  hardStallPauseActive;
+static uint32_t hardStallReleaseTick;
+static uint32_t softStallSinceTickL;
+static uint32_t softStallSinceTickR;
+static uint8_t  softStallActiveL;
+static uint8_t  softStallActiveR;
+
+static void clearHardStallLatch(DW *rtDW, ExtY *rtY) {
+  rtDW->UnitDelay_DSTATE_e &= (uint8_t)(~STALL_ERR_MASK);
+  rtY->z_errCode &= (uint8_t)(~STALL_ERR_MASK);
+  rtDW->Merge_p = false;
+}
+
+static void softStallGate(int *pwmCmd, int16_t motorSpeed, uint32_t now, uint32_t *sinceTick, uint8_t *stallActive) {
+  const int16_t speedThreshold = MAX(1, rtP_Left.n_stdStillDet >> 4);
+  const int16_t torqueThreshold = rtP_Left.r_errInpTgtThres;
+  const int16_t safeTorque = MAX(0, torqueThreshold - SOFT_STALL_TORQUE_MARGIN);
+
+  const uint8_t stallCondition = (ABS(motorSpeed) <= speedThreshold) && (ABS(*pwmCmd) > torqueThreshold);
+
+  if (stallCondition) {
+    if (*sinceTick == 0U) {
+      *sinceTick = now;
+    }
+    if (!(*stallActive) && ((now - *sinceTick) >= SOFT_STALL_DETECT_MS)) {
+      *stallActive = 1;
+    }
+  } else {
+    *sinceTick = 0U;
+    *stallActive = 0;
+  }
+
+  if (*stallActive && (ABS(*pwmCmd) > safeTorque)) {
+    *pwmCmd = (*pwmCmd >= 0) ? safeTorque : -safeTorque;
+  }
+}
+
 #ifdef MULTI_MODE_DRIVE
   static uint8_t drive_mode;
   static uint16_t max_speed;
@@ -256,6 +298,15 @@ int main(void) {
   #endif
 
   while(1) {
+    const uint32_t nowMs = HAL_GetTick();
+
+    if (hardStallPauseActive && ((int32_t)(nowMs - hardStallReleaseTick) >= 0)) {
+      hardStallPauseActive = 0;
+      clearHardStallLatch(&rtDW_Left, &rtY_Left);
+      clearHardStallLatch(&rtDW_Right, &rtY_Right);
+      enable = 1;
+    }
+
     if (buzzerTimer - buzzerTimer_prev > 16*DELAY_IN_MAIN_LOOP) {   // 1 ms = 16 ticks buzzerTimer
 
     readCommand();                        // Read Command: input1[inIdx].cmd, input2[inIdx].cmd
@@ -356,6 +407,10 @@ int main(void) {
         // ####### MIXER #######
         mixerFcn(speed << 4, steer << 4, &cmdR, &cmdL);   // This function implements the equations above
       #endif
+
+      // ####### STALL TORQUE SOFT GATE #######
+      softStallGate(&cmdL, rtY_Left.n_mot, nowMs, &softStallSinceTickL, &softStallActiveL);
+      softStallGate(&cmdR, rtY_Right.n_mot, nowMs, &softStallSinceTickR, &softStallActiveR);
 
 
       // ####### SET OUTPUTS (if the target change is less than +/- 100) #######
@@ -643,7 +698,16 @@ int main(void) {
         printf("# Powering off: battery voltage too low\r\n");
       #endif
       poweroff();
-    } else if (rtY_Left.z_errCode || rtY_Right.z_errCode) {                                           // 1 beep (low pitch): Motor error, disable motors
+    } else if ((rtY_Left.z_errCode & STALL_ERR_MASK) || (rtY_Right.z_errCode & STALL_ERR_MASK)) {     // Standstill hard-stall: pause 5s then auto-resume
+      if (!hardStallPauseActive) {
+        hardStallPauseActive = 1;
+        hardStallReleaseTick = nowMs + HARD_STALL_PAUSE_MS;
+      }
+      enable = 0;
+      pwml = 0;
+      pwmr = 0;
+      beepCount(1, 24, 1);
+    } else if (rtY_Left.z_errCode || rtY_Right.z_errCode) {                                           // 1 beep (low pitch): Other motor errors, disable motors
       enable = 0;
       beepCount(1, 24, 1);
     } else if (timeoutFlgADC) {                                                                       // 2 beeps (low pitch): ADC timeout
