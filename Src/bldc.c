@@ -103,6 +103,7 @@ typedef struct {
   int16_t  delta_theta;     /* Current angle increment per ISR cycle (ramping up) */
   uint16_t counter;         /* Cycle counter for timing phases */
   uint8_t  phase;           /* 0=inactive, 1=align, 2=rotate */
+  uint8_t  theta_acc;       /* Q4 fractional accumulator for sub-integer theta steps (0..15) */
 } OpenLoopState;
 
 static OpenLoopState olStateL = {0};
@@ -250,6 +251,7 @@ void DMA1_Channel1_IRQHandler(void) {
         olStateL.counter     = 0;
         olStateL.voltage     = 0;
         olStateL.delta_theta = 0;
+        olStateL.theta_acc   = 0;
       } else {
         olStateL.counter++;
 
@@ -262,13 +264,16 @@ void DMA1_Channel1_IRQHandler(void) {
             olStateL.counter = 0;
           }
         } else {
-          /* ROTATE phase: diagnostic slow-spin build — clamp to 1 count/ISR so
-           * "open-loop too fast" cannot explain a stuck rotor.  This yields
-           * ~0.4 rpm mechanical (1/23040 rev × 16000 Hz × 60 s / 15 pole-pairs).
-           * Normal ramp-to-OPENLOOP_DELTA_THETA_MAX behaviour is intentionally
-           * bypassed here; restore to the ramping version for production. */
-          int16_t dt = 1;
-          olStateL.delta_theta = (pwml > 0) ? dt : (int16_t)(-dt);
+          /* ROTATE phase: diagnostic slow-spin build — ~1 electrical rotation/sec.
+           * ISR runs at 16 kHz; one full rotation = 23040 counts.
+           * Target: 23040/16000 = 1.4375 counts/ISR.
+           * Use Q4 fractional accumulator: add 23 per ISR (23/16 = 1.4375),
+           * apply integer part → 23000 counts/sec ÷ 23040 ≈ 0.998 Hz (within 0.2%).
+           * Restore to the ramping version for production. */
+          olStateL.theta_acc += 23;
+          uint8_t dt_u = olStateL.theta_acc >> 4;
+          olStateL.theta_acc &= 0x0F;
+          olStateL.delta_theta = (pwml > 0) ? (int16_t)dt_u : (int16_t)(-dt_u);
 
           olStateL.theta += olStateL.delta_theta;
           if (olStateL.theta >= 23040) olStateL.theta -= 23040;
@@ -351,6 +356,7 @@ void DMA1_Channel1_IRQHandler(void) {
         olStateR.counter     = 0;
         olStateR.voltage     = 0;
         olStateR.delta_theta = 0;
+        olStateR.theta_acc   = 0;
       } else {
         olStateR.counter++;
 
@@ -363,11 +369,12 @@ void DMA1_Channel1_IRQHandler(void) {
             olStateR.counter = 0;
           }
         } else {
-          /* ROTATE phase: diagnostic slow-spin build — clamp to 1 count/ISR so
-           * "open-loop too fast" cannot explain a stuck rotor.  Same as left motor.
-           * Restore to the ramping version for production. */
-          int16_t dt = 1;
-          olStateR.delta_theta = (pwmr > 0) ? dt : (int16_t)(-dt);
+          /* ROTATE phase: diagnostic slow-spin build — ~1 electrical rotation/sec.
+           * Same accumulator approach as left motor. */
+          olStateR.theta_acc += 23;
+          uint8_t dt_u = olStateR.theta_acc >> 4;
+          olStateR.theta_acc &= 0x0F;
+          olStateR.delta_theta = (pwmr > 0) ? (int16_t)dt_u : (int16_t)(-dt_u);
 
           olStateR.theta += olStateR.delta_theta;
           if (olStateR.theta >= 23040) olStateR.theta -= 23040;
