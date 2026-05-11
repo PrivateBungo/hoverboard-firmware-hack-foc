@@ -11,7 +11,7 @@
 // or use VARIANT environment variable for example like "make -e VARIANT=VARIANT_NUNCHUK". Select only one at a time.
 #if !defined(PLATFORMIO)
   //#define VARIANT_ADC         // Variant for control via ADC input
-  #define VARIANT_USART       // Variant for Serial control via USART2 input; USART3 used for debug output
+  #define VARIANT_USART       // Variant for Serial control/feedback via USART3; USART2 used for debug output
   //#define VARIANT_NUNCHUK     // Variant for Nunchuk controlled vehicle build
   //#define VARIANT_PPM         // Variant for RC-Remote with PPM-Sum Signal
   //#define VARIANT_PWM         // Variant for RC-Remote with PWM Signal
@@ -169,6 +169,16 @@
 // #define ELECTRIC_BRAKE_MAX    100       // (0, 500) Maximum electric brake to be applied when input torque request is 0 (pedal fully released).
 // #define ELECTRIC_BRAKE_THRES  120       // (0, 500) Threshold below at which the electric brake starts engaging.
 
+// Soft stall protection for UGV operation. This supervisory limiter leaves hard
+// electrical protections enabled and only derates sustained high torque at low speed.
+#define STALL_PROTECTION_ENABLE                 // [-] Enable external soft stall torque derating.
+#define STALL_PROTECTION_CMD_THRESHOLD      650 // [-] Stall candidate requires command magnitude above this value.
+#define STALL_PROTECTION_SPEED_THRESHOLD_RPM 30 // [rpm] Stall candidate requires measured motor speed below this value.
+#define STALL_PROTECTION_GRACE_MS          1000 // [ms] Full command is allowed for this long after stall qualification starts.
+#define STALL_PROTECTION_RAMP_MS           1000 // [ms] Linear ramp from full command to sustained command.
+#define STALL_PROTECTION_FULL_CMD          1000 // [-] Expected full command ceiling.
+#define STALL_PROTECTION_SUSTAIN_CMD        350 // [-] Sustained command ceiling after the ramp completes.
+
 // Open-loop startup for smooth cold-start (eliminates electromagnetic lock at standstill)
 #define OPENLOOP_ENABLE                     // [-] Enable open-loop sinusoidal startup. Comment-out to disable.
 #define OPENLOOP_VOLTAGE_MAX    700         // [-] Maximum voltage amplitude during open-loop (0-16000). ~5% duty cycle.
@@ -324,12 +334,12 @@
 // ############################ VARIANT_USART SETTINGS ############################
 #ifdef VARIANT_USART
   // #define SIDEBOARD_SERIAL_USART2 0
-  #define CONTROL_SERIAL_USART2  0    // left sensor board cable, disable if ADC or PPM is used! For Arduino control check the hoverSerial.ino
-  #define FEEDBACK_SERIAL_USART2      // left sensor board cable, disable if ADC or PPM is used!
+  // #define CONTROL_SERIAL_USART2  0    // left sensor board cable, disable if ADC or PPM is used! For Arduino control check the hoverSerial.ino
+  // #define FEEDBACK_SERIAL_USART2      // left sensor board cable, disable if ADC or PPM is used!
 
   // #define SIDEBOARD_SERIAL_USART3 0
-  // #define CONTROL_SERIAL_USART3  0    // right sensor board cable. Number indicates priority for dual-input. Disable if I2C (nunchuk or lcd) is used! For Arduino control check the hoverSerial.ino
-  // #define FEEDBACK_SERIAL_USART3      // right sensor board cable, disable if I2C (nunchuk or lcd) is used!
+  #define CONTROL_SERIAL_USART3  0    // right sensor board cable. Number indicates priority for dual-input. Disable if I2C (nunchuk or lcd) is used! For Arduino control check the hoverSerial.ino
+  #define FEEDBACK_SERIAL_USART3      // right sensor board cable, disable if I2C (nunchuk or lcd) is used!
  
   // #define DUAL_INPUTS                 //  UART*(Primary) + SIDEBOARD(Auxiliary). Uncomment this to use Dual-inputs
   #define PRI_INPUT1             3, -1000, 0, 1000, 0     // TYPE, MIN, MID, MAX, DEADBAND. See INPUT FORMAT section
@@ -342,7 +352,7 @@
     #define AUX_INPUT2           3, -1000, 0, 1000, 0     // TYPE, MIN, MID, MAX, DEADBAND. See INPUT FORMAT section
   #else
     #define FLASH_WRITE_KEY      0x1002  // Flash memory writing key. Change this key to ignore the input calibrations from the flash memory and use the ones in config.h
-    #define DEBUG_SERIAL_USART3         // right sensor board cable debug output (USART2 is used for feedback/control)
+    #define DEBUG_SERIAL_USART2         // left sensor board cable debug output (USART3 is used for feedback/control)
   #endif
 
   // #define TANK_STEERING              // use for tank steering, each input controls each wheel

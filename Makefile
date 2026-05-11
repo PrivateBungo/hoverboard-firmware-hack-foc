@@ -41,6 +41,7 @@ Src/control.c \
 Src/comms.c \
 Src/util.c \
 Src/main.c \
+Src/stall_protection.c \
 Src/bldc.c \
 Src/eeprom.c \
 Src/hd44780.c \
