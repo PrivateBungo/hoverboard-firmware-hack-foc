@@ -169,6 +169,16 @@
 // #define ELECTRIC_BRAKE_MAX    100       // (0, 500) Maximum electric brake to be applied when input torque request is 0 (pedal fully released).
 // #define ELECTRIC_BRAKE_THRES  120       // (0, 500) Threshold below at which the electric brake starts engaging.
 
+// Soft stall protection for UGV operation. This supervisory limiter leaves hard
+// electrical protections enabled and only derates sustained high torque at low speed.
+#define STALL_PROTECTION_ENABLE                 // [-] Enable external soft stall torque derating.
+#define STALL_PROTECTION_CMD_THRESHOLD      650 // [-] Stall candidate requires command magnitude above this value.
+#define STALL_PROTECTION_SPEED_THRESHOLD_RPM 30 // [rpm] Stall candidate requires measured motor speed below this value.
+#define STALL_PROTECTION_GRACE_MS          1000 // [ms] Full command is allowed for this long after stall qualification starts.
+#define STALL_PROTECTION_RAMP_MS           1000 // [ms] Linear ramp from full command to sustained command.
+#define STALL_PROTECTION_FULL_CMD          1000 // [-] Expected full command ceiling.
+#define STALL_PROTECTION_SUSTAIN_CMD        350 // [-] Sustained command ceiling after the ramp completes.
+
 // Open-loop startup for smooth cold-start (eliminates electromagnetic lock at standstill)
 #define OPENLOOP_ENABLE                     // [-] Enable open-loop sinusoidal startup. Comment-out to disable.
 #define OPENLOOP_VOLTAGE_MAX    700         // [-] Maximum voltage amplitude during open-loop (0-16000). ~5% duty cycle.
