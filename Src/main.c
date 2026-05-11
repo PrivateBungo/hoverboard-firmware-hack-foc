@@ -164,6 +164,43 @@ static MultipleTap MultipleTapBrake;    // define multiple tap functionality for
 
 static uint16_t rate = RATE; // Adjustable rate to support multiple drive modes on startup
 
+#if STALL_PROTECTION_ENABLE
+typedef struct {
+  uint16_t elapsed_ms;
+} StallProtectionState;
+
+static StallProtectionState stall_left;
+static StallProtectionState stall_right;
+
+static int16_t stallProtectionLimit(int16_t command, int16_t motor_speed, StallProtectionState *state) {
+  const uint16_t total_derate_ms = STALL_GRACE_MS + STALL_DERATE_MS;
+  int16_t limit = 1000;
+
+  if (enable && ABS(command) >= STALL_CMD_THRES && ABS(motor_speed) <= STALL_SPEED_THRES_RPM) {
+    if (state->elapsed_ms < total_derate_ms) {
+      state->elapsed_ms = (uint16_t)MIN((uint32_t)state->elapsed_ms + DELAY_IN_MAIN_LOOP, total_derate_ms);
+    }
+  } else {
+    state->elapsed_ms = 0;
+  }
+
+  if (state->elapsed_ms > STALL_GRACE_MS) {
+    const uint16_t derate_elapsed_ms = state->elapsed_ms - STALL_GRACE_MS;
+    const int16_t derate_span = 1000 - STALL_SUSTAIN_CMD_LIMIT;
+
+    if (STALL_DERATE_MS > 0) {
+      limit = (int16_t)(1000 - ((int32_t)derate_span * derate_elapsed_ms) / STALL_DERATE_MS);
+    } else {
+      limit = STALL_SUSTAIN_CMD_LIMIT;
+    }
+
+    limit = CLAMP(limit, STALL_SUSTAIN_CMD_LIMIT, 1000);
+  }
+
+  return LIMIT(command, limit);
+}
+#endif
+
 #ifdef MULTI_MODE_DRIVE
   static uint8_t drive_mode;
   static uint16_t max_speed;
@@ -457,6 +494,14 @@ int main(void) {
         }
       #endif
       transpotter_counter++;
+    #endif
+
+    #if STALL_PROTECTION_ENABLE
+      // ####### UGV SOFT STALL PROTECTION #######
+      // Apply only to the final motor targets. Hard current chopping and fatal
+      // diagnostics remain in bldc.c / BLDC_controller.c.
+      pwml = stallProtectionLimit((int16_t)pwml, (int16_t)rtY_Left.n_mot, &stall_left);
+      pwmr = stallProtectionLimit((int16_t)pwmr, (int16_t)rtY_Right.n_mot, &stall_right);
     #endif
 
     // ####### SIDEBOARDS HANDLING #######

@@ -18,6 +18,14 @@
  */
 
 #include "BLDC_controller.h"
+#include "config.h"
+
+/* config.h defines the public control-mode values; the generated model below
+ * uses local typed constants with the same names. */
+#undef OPEN_MODE
+#undef SPD_MODE
+#undef TRQ_MODE
+#undef VLT_MODE
 
 /* Named constants for Chart: '<S5>/F03_02_Control_Mode_Manager' */
 #define IN_ACTIVE                      ((uint8_T)1U)
@@ -1721,8 +1729,28 @@ void BLDC_controller_step(RT_MODEL *const rtM)
         + (rtb_RelationalOperator1_mv << 2));
 
       /* Outputs for Atomic SubSystem: '<S20>/Debounce_Filter' */
+#if STALL_PROTECTION_ENABLE
+      {
+        uint16_T t_errQual = rtP->t_errQual;
+
+        /*
+         * Keep invalid hall-sector faults on the generated default qualification
+         * time. Only the operational standstill/high-command diagnostic bit gets
+         * the longer UGV soft-stall window, allowing main.c to derate first.
+         */
+        if (rtb_a_elecAngle_XA_g == 4U) {
+          t_errQual = (uint16_T)(((uint32_T)STALL_COMM_FAULT_QUAL_MS *
+            (uint32_T)PWM_FREQ) / 3000U);
+        }
+
+        Debounce_Filter(rtb_a_elecAngle_XA_g != 0, t_errQual,
+                        rtP->t_errDequal, &rtDW->Merge_p,
+                        &rtDW->Debounce_Filter_k);
+      }
+#else
       Debounce_Filter(rtb_a_elecAngle_XA_g != 0, rtP->t_errQual,
                       rtP->t_errDequal, &rtDW->Merge_p, &rtDW->Debounce_Filter_k);
+#endif
 
       /* End of Outputs for SubSystem: '<S20>/Debounce_Filter' */
 
