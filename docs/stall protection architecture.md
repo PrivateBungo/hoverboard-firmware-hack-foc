@@ -626,3 +626,127 @@ The firmware already contains:
 * diagnostic qualification logic
 
 The requested architecture should integrate with these existing mechanisms instead of replacing them.
+
+---
+
+# 11. Implemented Firmware Architecture
+
+The implemented strategy follows the preferred Option A / Option 4 approach: keep the generated FOC controller and ISR-level electrical protection intact, then add a supervisory torque limiter around the final motor commands in `main.c`.
+
+## 11.1 Current diagnostic map
+
+Reverse engineering found that the generated diagnostic path is timer-qualified and includes three diagnostic bits:
+
+```text
+invalid hall sector 0
+invalid hall sector 7
+low speed + high input target while motor enabled
+    ↓
+rtb_a_elecAngle_XA_g bitfield
+    ↓
+Debounce_Filter(t_errQual, t_errDequal)
+    ↓
+rtDW->Merge_p
+    ↓
+z_errCode update on Merge_p edge
+    ↓
+F03_Control_Mode_Manager forces OPEN_MODE when Merge_p is true
+```
+
+The operational stall-like condition is the third bit:
+
+```c
+rtU->b_motEna &&
+Abs5 < rtP->n_stdStillDet &&
+abs(rtDW->UnitDelay4_DSTATE_eu) > rtP->r_errInpTgtThres
+```
+
+That means the generated controller already treats “enabled motor + near standstill + high requested target” as a debounced diagnostic. The implementation does **not** remove this diagnostic. Instead, it moves its qualification time outside the soft derating envelope so the UGV derating layer can act first.
+
+## 11.2 Added configuration
+
+The following parameters now live in `Inc/config.h`:
+
+```c
+#define STALL_PROTECTION_ENABLE         1
+#define STALL_CMD_THRES                 650
+#define STALL_SPEED_THRES_RPM           5
+#define STALL_GRACE_MS                  1000
+#define STALL_DERATE_MS                 1000
+#define STALL_SUSTAIN_CMD_LIMIT         350
+#define STALL_COMM_FAULT_QUAL_MS        2500
+```
+
+Behavior summary:
+
+```text
+command < 650 or speed > 5 rpm : no stall limiting; timer resets
+0-1000 ms                      : full command allowed
+1000-2000 ms                   : command ceiling linearly ramps 1000 → 350
+>2000 ms                       : command ceiling remains ±350
+```
+
+The limiter automatically resets when torque demand falls below the threshold, the motor speed recovers above the threshold, or the global motor enable is cleared.
+
+## 11.3 Main-loop supervisory limiter
+
+`main.c` now keeps one small stall timer per motor. After normal input reading, rate limiting, filtering, mixing, and direction inversion, the limiter clamps only the final `pwml` and `pwmr` values sent to the generated controller.
+
+This placement is intentional:
+
+* existing input filtering and rate limiting still run normally;
+* steering/mixing behavior remains unchanged;
+* the FOC current loops are not modified;
+* the ISR current chopping in `bldc.c` is not modified;
+* generated Simulink state-machine logic is not structurally edited.
+
+## 11.4 Generated diagnostic timing coordination
+
+The generated diagnostics now select the debounce qualification time according to the diagnostic bit: invalid hall-sector faults continue using the generated `rtP->t_errQual`, while the operational standstill/high-command bit uses the longer `STALL_COMM_FAULT_QUAL_MS` window when stall protection is enabled.
+
+The generated diagnostics are called by one phase of a three-step scheduler, so the debounce counter advances at approximately:
+
+```text
+PWM_FREQ / 3 = 16000 / 3 ≈ 5333 counts/s
+```
+
+For `STALL_COMM_FAULT_QUAL_MS = 2500`, the generated commutation diagnostic qualification becomes approximately:
+
+```text
+2500 ms × 16000 / 3000 ≈ 13333 counts
+```
+
+This leaves the generated fatal OPEN_MODE transition outside the intended soft trajectory:
+
+```text
+0-1000 ms     full command allowed
+1000-2000 ms  soft derating completes
+2500 ms       generated commutation diagnostic may qualify if still unhealthy
+```
+
+This keeps the original stall diagnostic path as a final fallback if the stall remains severe after derating has had time to reduce stress, without delaying invalid hall-sector faults.
+
+## 11.5 Hard protections unchanged
+
+The following hard protection behavior remains unchanged:
+
+* ISR-level DC-link overcurrent chopping in `bldc.c`;
+* motor disable when `enable == 0`;
+* generated invalid hall-sector diagnostics at the generated qualification timing;
+* generated OPEN_MODE behavior after debounced diagnostics qualify;
+* temperature and battery poweroff logic in `main.c`.
+
+## 11.6 Simulation performed
+
+A host-side Python simulation was used to mirror the integer timing and linear clamp logic. The expected command ceiling was verified at the key timeline points:
+
+```text
+0 ms       → 1000
+1000 ms    → 1000
+1500 ms    → 675
+2000 ms    → 350
+>2000 ms   → 350
+recovery   → timer reset, command restored
+```
+
+This simulation does not model the motor physics or the generated FOC internals. It validates the deterministic supervisory derating algorithm and the timing relationship against the configured diagnostic qualification window.

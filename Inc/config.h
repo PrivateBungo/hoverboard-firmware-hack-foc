@@ -154,7 +154,16 @@
 // Limitation settings
 #define I_MOT_MAX       13              // [A] Maximum single motor current limit
 #define I_DC_MAX        15              // [A] Maximum stage2 DC Link current limit for Commutation and Sinusoidal types (This is the final current protection. Above this value, current chopping is applied. To avoid this make sure that I_DC_MAX = I_MOT_MAX + 2A)
-#define N_MOT_MAX       50             // [rpm] Maximum motor speed limit
+#define N_MOT_MAX       50              // [rpm] Maximum motor speed limit
+
+// UGV stall protection settings
+#define STALL_PROTECTION_ENABLE         1     // [-] 1 = enable soft operational stall torque derating in main.c
+#define STALL_CMD_THRES                 650   // [-] Command magnitude above which low speed is considered a driven stall
+#define STALL_SPEED_THRES_RPM           5     // [rpm] Wheel speed magnitude below which a high command is considered stalled
+#define STALL_GRACE_MS                  1000  // [ms] Full-torque tolerance before derating starts
+#define STALL_DERATE_MS                 1000  // [ms] Linear ramp time from full command to STALL_SUSTAIN_CMD_LIMIT
+#define STALL_SUSTAIN_CMD_LIMIT         350   // [-] Sustained torque command limit after derating completes
+#define STALL_COMM_FAULT_QUAL_MS        2500  // [ms] Keep commutation diagnostic outside the soft derating trajectory
 
 // Field Weakening / Phase Advance
 #define FIELD_WEAK_ENA  0               // [-] Field Weakening / Phase Advance enable flag: 0 = Disabled (default), 1 = Enabled
