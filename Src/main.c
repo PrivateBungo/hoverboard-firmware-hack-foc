@@ -63,6 +63,8 @@ extern ExtY rtY_Left;                   /* External outputs */
 extern ExtY rtY_Right;                  /* External outputs */
 extern ExtU rtU_Left;                   /* External inputs */
 extern ExtU rtU_Right;                  /* External inputs */
+extern DW   rtDW_Left;                  /* Observable states */
+extern DW   rtDW_Right;                 /* Observable states */
 //---------------
 
 extern uint8_t     inIdx;               // input index used for dual-inputs
@@ -79,6 +81,8 @@ extern uint8_t timeoutFlgSerial;        // Timeout Flag for Rx Serial command: 0
 
 extern volatile int pwml;               // global variable for pwm left. -1000 to 1000
 extern volatile int pwmr;               // global variable for pwm right. -1000 to 1000
+extern volatile int16_t wheelPosL_deg;  // left wheel position, modulo 720 degrees
+extern volatile int16_t wheelPosR_deg;  // right wheel position, modulo 720 degrees
 
 extern uint8_t enable;                  // global variable for motor enable
 
@@ -123,6 +127,8 @@ typedef struct{
   int16_t   cmd2;
   int16_t   speedR_meas;
   int16_t   speedL_meas;
+  int16_t   angleR_meas;
+  int16_t   angleL_meas;
   int16_t   batVoltage;
   int16_t   boardTemp;
   uint16_t  cmdLed;
@@ -161,8 +167,12 @@ static int16_t    speed;                // local variable for speed. -1000 to 10
 static uint32_t    buzzerTimer_prev = 0;
 static uint32_t    inactivity_timeout_counter;
 static MultipleTap MultipleTapBrake;    // define multiple tap functionality for the Brake pedal
+static uint16_t z_error_recovery_counter_ms;
 
 static uint16_t rate = RATE; // Adjustable rate to support multiple drive modes on startup
+
+#define STANDSTILL_Z_ERROR_CODE     4U
+#define Z_ERROR_RECOVERY_MS         10000U
 
 #if STALL_PROTECTION_ENABLE
 typedef struct {
@@ -200,6 +210,37 @@ static int16_t stallProtectionLimit(int16_t command, int16_t motor_speed, StallP
   return LIMIT(command, limit);
 }
 #endif
+
+static void recoverStandstillZError(void) {
+  uint8_t recoverable_error = 0;
+
+  if (rtY_Left.z_errCode == STANDSTILL_Z_ERROR_CODE || rtY_Right.z_errCode == STANDSTILL_Z_ERROR_CODE) {
+    recoverable_error = 1;
+  }
+
+  if (recoverable_error && ((rtY_Left.z_errCode & ~STANDSTILL_Z_ERROR_CODE) == 0U) &&
+      ((rtY_Right.z_errCode & ~STANDSTILL_Z_ERROR_CODE) == 0U)) {
+    enable = 0;
+
+    if (z_error_recovery_counter_ms < Z_ERROR_RECOVERY_MS) {
+      z_error_recovery_counter_ms = (uint16_t)MIN((uint32_t)z_error_recovery_counter_ms + DELAY_IN_MAIN_LOOP, Z_ERROR_RECOVERY_MS);
+    }
+
+    if (z_error_recovery_counter_ms >= Z_ERROR_RECOVERY_MS) {
+      rtY_Left.z_errCode = 0;
+      rtY_Right.z_errCode = 0;
+      rtDW_Left.UnitDelay_DSTATE_e = 0;
+      rtDW_Right.UnitDelay_DSTATE_e = 0;
+      z_error_recovery_counter_ms = 0;
+
+      if (!timeoutFlgADC && !timeoutFlgSerial && !timeoutFlgGen) {
+        enable = 1;
+      }
+    }
+  } else if (!rtY_Left.z_errCode && !rtY_Right.z_errCode) {
+    z_error_recovery_counter_ms = 0;
+  }
+}
 
 #ifdef MULTI_MODE_DRIVE
   static uint8_t drive_mode;
@@ -290,6 +331,7 @@ int main(void) {
 
     readCommand();                        // Read Command: input1[inIdx].cmd, input2[inIdx].cmd
     calcAvgSpeed();                       // Calculate average measured speed: speedAvg, speedAvgAbs
+    recoverStandstillZError();             // Let standstill/high-torque z-error cool down, then clear it
 
     #ifndef VARIANT_TRANSPOTTER
       // ####### MOTOR ENABLING: Only if the initial input is very small (for SAFETY) #######
@@ -603,13 +645,16 @@ int main(void) {
         Feedback.cmd2           = (int16_t)input2[inIdx].cmd;
         Feedback.speedR_meas	  = (int16_t)rtY_Right.n_mot;
         Feedback.speedL_meas	  = (int16_t)rtY_Left.n_mot;
+        Feedback.angleR_meas   = wheelPosR_deg;
+        Feedback.angleL_meas   = wheelPosL_deg;
         Feedback.batVoltage	    = (int16_t)batVoltageCalib;
         Feedback.boardTemp	    = (int16_t)board_temp_deg_c;
 
         #if defined(FEEDBACK_SERIAL_USART2)
           if(__HAL_DMA_GET_COUNTER(huart2.hdmatx) == 0) {
             Feedback.cmdLed     = (uint16_t)sideboard_leds_L;
-            Feedback.checksum   = (uint16_t)(Feedback.start ^ Feedback.cmd1 ^ Feedback.cmd2 ^ Feedback.speedR_meas ^ Feedback.speedL_meas 
+            Feedback.checksum   = (uint16_t)(Feedback.start ^ Feedback.cmd1 ^ Feedback.cmd2 ^ Feedback.speedR_meas
+                                           ^ Feedback.speedL_meas ^ Feedback.angleR_meas ^ Feedback.angleL_meas
                                            ^ Feedback.batVoltage ^ Feedback.boardTemp ^ Feedback.cmdLed);
 
             HAL_UART_Transmit_DMA(&huart2, (uint8_t *)&Feedback, sizeof(Feedback));
@@ -618,7 +663,8 @@ int main(void) {
         #if defined(FEEDBACK_SERIAL_USART3)
           if(__HAL_DMA_GET_COUNTER(huart3.hdmatx) == 0) {
             Feedback.cmdLed     = (uint16_t)sideboard_leds_R;
-            Feedback.checksum   = (uint16_t)(Feedback.start ^ Feedback.cmd1 ^ Feedback.cmd2 ^ Feedback.speedR_meas ^ Feedback.speedL_meas 
+            Feedback.checksum   = (uint16_t)(Feedback.start ^ Feedback.cmd1 ^ Feedback.cmd2 ^ Feedback.speedR_meas
+                                           ^ Feedback.speedL_meas ^ Feedback.angleR_meas ^ Feedback.angleL_meas
                                            ^ Feedback.batVoltage ^ Feedback.boardTemp ^ Feedback.cmdLed);
 
             HAL_UART_Transmit_DMA(&huart3, (uint8_t *)&Feedback, sizeof(Feedback));
