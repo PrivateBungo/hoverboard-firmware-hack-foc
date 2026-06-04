@@ -154,7 +154,7 @@
 // Limitation settings
 #define I_MOT_MAX       13              // [A] Maximum single motor current limit
 #define I_DC_MAX        15              // [A] Maximum stage2 DC Link current limit for Commutation and Sinusoidal types (This is the final current protection. Above this value, current chopping is applied. To avoid this make sure that I_DC_MAX = I_MOT_MAX + 2A)
-#define N_MOT_MAX       50              // [rpm] Maximum motor speed limit
+#define N_MOT_MAX       75              // [rpm] Maximum motor speed limit
 
 // UGV stall protection settings
 #define STALL_PROTECTION_ENABLE         1     // [-] 1 = enable soft operational stall torque derating in main.c

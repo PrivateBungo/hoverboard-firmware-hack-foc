@@ -31,12 +31,14 @@ Protocol (little-endian, all fields 2 bytes):
         uint16  checksum   = start ^ steer ^ speed  (XOR, treating int16 as uint16)
 
     SerialFeedback (board → host, sent every ~10 ms, via control port):
-        uint16  start      = 0xABCD
-        int16   cmd1       echoed steer command
-        int16   cmd2       echoed speed command
+        uint16  start        = 0xABCD
+        int16   cmd1         echoed steer command
+        int16   cmd2         echoed speed command
         int16   speedR_meas  right motor speed  [rpm units]
         int16   speedL_meas  left  motor speed  [rpm units]
-        int16   batVoltage   battery voltage × 100  [V×100]
+        int16   angleR_meas  right wheel position [deg modulo 720]
+        int16   angleL_meas  left  wheel position [deg modulo 720]
+        int16   batVoltage   battery voltage firmware units
         int16   boardTemp    board temperature      [°C]
         uint16  cmdLed       LED command flags
         uint16  checksum     XOR of all preceding fields
@@ -92,11 +94,11 @@ START_FRAME         = 0xABCD
 BAUD_RATE           = 115200
 SEND_INTERVAL_S     = 0.1       # send a command every 100 ms
 RAMP_STEP           = 10        # increment speed by this much per send interval
-FEEDBACK_FRAME_SIZE = 18        # bytes: 9 × uint16/int16
+FEEDBACK_FRAME_SIZE = 22        # bytes: 11 × uint16/int16
 
 # Struct formats (little-endian)
 CMD_FMT  = "<HhhH"   # start(u16) steer(i16) speed(i16) checksum(u16)
-FB_FMT   = "<HhhhhhhHH"  # start cmd1 cmd2 speedR speedL batV temp cmdLed checksum
+FB_FMT   = "<HhhhhhhhhHH"  # start cmd1 cmd2 speedR speedL angleR angleL batV temp cmdLed checksum
 
 
 def build_command(steer: int, speed: int) -> bytes:
@@ -114,7 +116,7 @@ def parse_feedback(buf: bytes):
     if len(buf) < FEEDBACK_FRAME_SIZE:
         return None
     fields = struct.unpack(FB_FMT, buf[:FEEDBACK_FRAME_SIZE])
-    start, cmd1, cmd2, speedR, speedL, batV, temp, cmdLed, checksum = fields
+    start, cmd1, cmd2, speedR, speedL, angleR, angleL, batV, temp, cmdLed, checksum = fields
 
     if start != START_FRAME:
         return None
@@ -125,6 +127,8 @@ def parse_feedback(buf: bytes):
         ^ (cmd2  & 0xFFFF)
         ^ (speedR & 0xFFFF)
         ^ (speedL & 0xFFFF)
+        ^ (angleR & 0xFFFF)
+        ^ (angleL & 0xFFFF)
         ^ (batV  & 0xFFFF)
         ^ (temp  & 0xFFFF)
         ^ cmdLed
@@ -137,6 +141,8 @@ def parse_feedback(buf: bytes):
         "cmd2":      cmd2,
         "speedR":    speedR,
         "speedL":    speedL,
+        "angleR":    angleR,
+        "angleL":    angleL,
         "batV_x100": batV,
         "temp_C":    temp,
         "cmdLed":    cmdLed,
@@ -185,6 +191,7 @@ def feedback_reader(ser: serial.Serial) -> None:
                 print(
                     f"[FB] cmd1={frame['cmd1']:5d}  cmd2={frame['cmd2']:5d}  "
                     f"speedR={frame['speedR']:5d}  speedL={frame['speedL']:5d}  "
+                    f"angleR={frame['angleR']:5d}  angleL={frame['angleL']:5d}  "
                     f"bat={bat_v:.2f}V  temp={frame['temp_C']}°C  "
                     f"led=0x{frame['cmdLed']:04X}",
                     flush=True,

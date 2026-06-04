@@ -44,6 +44,7 @@ extern P    rtP_Left;
 extern DW   rtDW_Right;                 /* Observable states */
 extern ExtU rtU_Right;                  /* External inputs */
 extern ExtY rtY_Right;                  /* External outputs */
+extern P    rtP_Right;
 // ###############################################################################
 
 static int16_t pwm_margin;              /* This margin allows to have a window in the PWM signal for proper FOC Phase currents measurement */
@@ -52,6 +53,53 @@ extern uint8_t ctrlModReq;
 static int16_t curDC_max = (I_DC_MAX * A2BIT_CONV);
 int16_t curL_phaA = 0, curL_phaB = 0, curL_DC = 0;
 int16_t curR_phaB = 0, curR_phaC = 0, curR_DC = 0;
+
+volatile int16_t wheelPosL_deg = 0;
+volatile int16_t wheelPosR_deg = 0;
+
+typedef struct {
+  int16_t sector_count;
+  int8_t  last_hall_pos;
+} WheelPositionTracker;
+
+static WheelPositionTracker wheel_pos_left  = {0, -1};
+static WheelPositionTracker wheel_pos_right = {0, -1};
+
+static void updateWheelPosition(uint8_t hall_state, uint8_t pole_pairs, WheelPositionTracker *tracker, volatile int16_t *position_deg) {
+  static const int8_t hall_to_pos[8] = { -1, 2, 0, 1, 4, 3, 5, -1 };
+  const int8_t hall_pos = hall_to_pos[hall_state & 0x07U];
+
+  if (hall_pos < 0 || pole_pairs == 0U) {
+    return;
+  }
+
+  if (tracker->last_hall_pos >= 0) {
+    int8_t delta = (int8_t)(hall_pos - tracker->last_hall_pos);
+
+    if (delta > 3) {
+      delta = (int8_t)(delta - 6);
+    } else if (delta < -3) {
+      delta = (int8_t)(delta + 6);
+    }
+
+    if (delta != 0) {
+      const int16_t modulo_sectors = (int16_t)pole_pairs * 12;
+      int16_t next_sector = (int16_t)(tracker->sector_count + delta);
+
+      while (next_sector < 0) {
+        next_sector = (int16_t)(next_sector + modulo_sectors);
+      }
+      while (next_sector >= modulo_sectors) {
+        next_sector = (int16_t)(next_sector - modulo_sectors);
+      }
+
+      tracker->sector_count = next_sector;
+      *position_deg = (int16_t)(((int32_t)next_sector * 720) / modulo_sectors);
+    }
+  }
+
+  tracker->last_hall_pos = hall_pos;
+}
 
 volatile int pwml = 0;
 volatile int pwmr = 0;
@@ -176,6 +224,8 @@ void DMA1_Channel1_IRQHandler(void) {
     uint8_t hall_ul = !(LEFT_HALL_U_PORT->IDR & LEFT_HALL_U_PIN);
     uint8_t hall_vl = !(LEFT_HALL_V_PORT->IDR & LEFT_HALL_V_PIN);
     uint8_t hall_wl = !(LEFT_HALL_W_PORT->IDR & LEFT_HALL_W_PIN);
+    uint8_t hall_state_l = (uint8_t)((hall_ul << 2) | (hall_vl << 1) | hall_wl);
+    updateWheelPosition(hall_state_l, rtP_Left.n_polePairs, &wheel_pos_left, &wheelPosL_deg);
 
     /* Set motor inputs here */
     rtU_Left.b_motEna     = enableFin;
@@ -214,6 +264,8 @@ void DMA1_Channel1_IRQHandler(void) {
     uint8_t hall_ur = !(RIGHT_HALL_U_PORT->IDR & RIGHT_HALL_U_PIN);
     uint8_t hall_vr = !(RIGHT_HALL_V_PORT->IDR & RIGHT_HALL_V_PIN);
     uint8_t hall_wr = !(RIGHT_HALL_W_PORT->IDR & RIGHT_HALL_W_PIN);
+    uint8_t hall_state_r = (uint8_t)((hall_ur << 2) | (hall_vr << 1) | hall_wr);
+    updateWheelPosition(hall_state_r, rtP_Right.n_polePairs, &wheel_pos_right, &wheelPosR_deg);
 
     /* Set motor inputs here */
     rtU_Right.b_motEna      = enableFin;
