@@ -11,6 +11,7 @@ This repository implements Field Oriented Control (FOC) for stock hoverboards. C
 Table of Contents
 =======================
 
+* **Ubuntu flashing:** follow the [build and flashing user manual](/user-manual/ubuntu-flashing.md)
 * **Wiki:** please check the wiki pages for [Getting Started](https://github.com/EFeru/hoverboard-firmware-hack-FOC/wiki#getting-started) and for [Troubleshooting](https://github.com/EFeru/hoverboard-firmware-hack-FOC/wiki#troubleshooting)
 * [Hardware](#hardware)
 * [FOC Firmware](#foc-firmware)
